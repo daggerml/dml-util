@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import hashlib
 from dataclasses import dataclass, field
 from io import BytesIO
 from tempfile import NamedTemporaryFile
@@ -7,14 +6,7 @@ from tempfile import NamedTemporaryFile
 import boto3
 from daggerml import Resource
 
-from dml_util.common import BUCKET, PREFIX, exactly_one
-
-
-def compute_hash(obj, chunk_size=8192, hash_algorithm="sha256"):
-    hash_fn = hashlib.new(hash_algorithm)
-    while chunk := obj.read(chunk_size):
-        hash_fn.update(chunk)
-    return hash_fn.hexdigest()
+from dml_util.common import BUCKET, PREFIX, compute_hash, exactly_one
 
 
 @dataclass

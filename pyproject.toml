@@ -121,6 +121,7 @@ ban-relative-imports = "all"
 "__init__.py" = ["F401", "E402"]
 # Tests can use magic values, assertions, and relative imports
 "tests/**/*" = ["PLR2004", "S101", "TID252"]
+"examples/**/*" = ["I001"]
 
 [tool.coverage.run]
 source_pkgs = ["dml_util"]
