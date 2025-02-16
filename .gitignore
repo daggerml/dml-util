@@ -1,3 +1,10 @@
+# daggerml
+.dml/
+# scm writes version info now...
+__about__.py
+# jupytext .py to .ipynb ignore
+docs/examples/*.ipynb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
