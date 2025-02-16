@@ -29,11 +29,12 @@ dependencies = [
   "daggerml==0.0.26",
   "daggerml-cli==0.0.16",
   "boto3",
-  "docker==7.1.0",
 ]
 
 [project.optional-dependencies]
+docker = ["docker==7.1.0"]
 test = [
+  "docker==7.1.0",
   "pytest",
   "pytest-cov",
   "moto[all,server]",
