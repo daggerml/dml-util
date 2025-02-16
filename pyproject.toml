@@ -1,0 +1,152 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dml-util"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Aaron Niskin", email = "aaron@niskin.org" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "daggerml==0.0.25",
+  "daggerml-cli==0.0.15",
+  "boto3",
+  "docker==7.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "pytest-cov",
+  "moto[all,server]",
+]
+
+[project.scripts]
+dml-util-lambda-adapter = "dml_util.adapter:lambda_"
+dml-util-local-adapter = "dml_util.adapter:local_"
+dml-util-script-exec = "dml_util.executor:ScriptRunner.cli"
+dml-util-docker-exec = "dml_util.executor:DockerRunner.cli"
+
+[project.urls]
+Documentation = "https://github.com/daggerml/dml-util#readme"
+Issues = "https://github.com/daggerml/dml-util/issues"
+Source = "https://github.com/daggerml/dml-util"
+
+[tool.pytest.ini_options]
+pythonpath = "tests/"
+minversion = "6.0"
+addopts = "-ra --ignore=submodules/"
+testpaths = [
+  "tests",
+]
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "serial",
+]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "only-version"   # use tag as version
+local_scheme = "no-local-version"  # pypi does not support local-schemes
+tag_regex = "^v(?P<version>[0-9.]+)$"
+version_file = "src/dml_util/__about__.py"  # write version info to this file
+relative_to = "{root:uri}"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dml_util"]
+artifacts = [
+  "src/dml_util/__about__.py"  # add to hatch build because it's git ignored
+]
+
+[tool.hatch.envs.default]
+python="3.10"
+dependencies = [
+  "twine",
+  "dml-util[test]",
+]
+
+[tool.hatch.envs.default.scripts]
+test = 'pytest . {args}'
+coverage-report = 'pytest --cov-report term-missing --cov=dml_util tests/'
+dml-build = "hatch build && twine upload -r {args:testpypi} dist/*"
+
+[tool.hatch.envs.default.env-vars]
+PYTHONDONTWRITEBYTECODE = "1"
+DML_S3_BUCKET = "dml-doesnotexist"
+DML_S3_PREFIX = "jobs"
+
+[tool.hatch.envs.test-all]
+template = "default"
+
+[[tool.hatch.envs.test-all.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "PGH004"]
+ignore = []
+unfixable = ["B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dml_util"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "E402"]
+# Tests can use magic values, assertions, and relative imports
+"tests/**/*" = ["PLR2004", "S101", "TID252"]
+
+[tool.coverage.run]
+source_pkgs = ["dml_util"]
+branch = true
+parallel = true
+omit = [
+  "src/dml_util/__about__.py",
+]
+
+[tool.coverage.paths]
+dml_util = ["src/dml_util", "*/dml-util/src/dml_util"]
+tests = ["tests", "*/dml-util/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
+
+[tool.pyright]
+include = ["src"]
+defineConstant = { DEBUG = true }
+typeCheckingMode = "basic"
+reportGeneralTypeIssues = false
+reportMissingImports = "error"
+reportMissingTypeStubs = false
+reportOptionalCall = false
+reportOptionalMemberAccess = false
