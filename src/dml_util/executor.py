@@ -7,6 +7,10 @@ import sys
 import time
 from pathlib import Path
 
+import boto3
+from botocore.exceptions import ClientError
+from daggerml import Dml
+
 logger = logging.getLogger(__name__)
 
 
@@ -186,3 +190,91 @@ class DockerRunner(Runner):
         elif container_status in ["exited", "paused", "dead", "no-longer-exists"]:
             msg = f"container {container_id} finished with status {container_status!r}"
             return None, msg, self.maybe_complete(container_id, container_status)
+
+
+class CloudformationRunner(Runner):
+    name = "cfn"
+
+    def fmt(self, name, stack_id, status, raw_status):
+        return f"{name} : {stack_id} : {status} ({raw_status})"
+
+    def describe_stack(self, client, name, StackId):
+        try:
+            stack = client.describe_stacks(StackName=name)["Stacks"][0]
+        except ClientError as e:
+            if "does not exist" in str(e):
+                return None, None
+            raise
+        raw_status = stack["StackStatus"]
+        state = {"StackId": stack["StackId"], "name": name}
+        if StackId is not None and state["StackId"] != StackId:
+            raise RuntimeError(f"stack ID changed from {StackId} to {state['StackId']}!")
+        if raw_status in ["CREATE_COMPLETE", "UPDATE_COMPLETE"]:
+            status = "success"
+            state["outputs"] = {o["OutputKey"]: o["OutputValue"] for o in stack.get("Outputs", [])}
+        elif raw_status in [
+            "ROLLBACK_COMPLETE",
+            "ROLLBACK_FAILED",
+            "CREATE_FAILED",
+            "DELETE_FAILED",
+        ]:
+            events = client.describe_stack_events(StackName=name)["StackEvents"]
+            status = "failed"
+            failure_events = [e for e in events if "ResourceStatusReason" in e]
+            state["failure_reasons"] = [e["ResourceStatusReason"] for e in failure_events]
+            if StackId is not None:  # create failed
+                msg = "Stack failed:\n\n" + json.dumps(state, default=str, indent=2)
+                raise RuntimeError(msg)
+        elif StackId is None:
+            raise RuntimeError("cannot create new stack while stack is currently being created")
+        else:
+            status = "creating"
+        return state, self.fmt(name, state["StackId"], status, raw_status)
+
+    def submit(self, client):
+        with Dml(data=self.dump) as dml:
+            with dml.new(f"fn:{self.cache_key}", f"execution of: {self.cache_key}") as dag:
+                name, js, params = dag.argv[1:4].value()
+        old_state, msg = self.describe_stack(client, name, None)
+        fn = client.create_stack if old_state is None else client.update_stack
+        try:
+            resp = fn(
+                StackName=name,
+                TemplateBody=json.dumps(js),
+                Parameters=[{"ParameterKey": k, "ParameterValue": v} for k, v in params.items()],
+                Capabilities=["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"],
+            )
+        except ClientError as e:
+            if not e.response["Error"]["Message"].endswith("No updates are to be performed."):
+                raise
+            resp = old_state
+        state = {"name": name, "StackId": resp["StackId"]}
+        msg = self.fmt(name, state["StackId"], "creating", None)
+        return state, msg
+
+    def update(self, state):
+        client = boto3.client("cloudformation")
+        result = None
+        if state is None:
+            state, msg = self.submit(client)
+            return state, msg, None
+        state, msg = self.describe_stack(client, **state)
+        if "outputs" in state:
+
+            def _handler(dump):
+                nonlocal result
+                result = dump
+
+            try:
+                with Dml(data=self.dump, message_handler=_handler) as dml:
+                    with dml.new(f"fn:{self.cache_key}", f"execution of: {self.cache_key}") as dag:
+                        for k, v in state["outputs"].items():
+                            dag[k] = v
+                        dag.stack_id = state["StackId"]
+                        dag.stack_name = state["name"]
+                        dag.result = state["outputs"]
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                pass
+        return state, msg, result

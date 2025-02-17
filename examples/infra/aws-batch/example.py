@@ -4,16 +4,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from daggerml import Dml, Resource
 
-
-def update_uri_query(resource, new_params):
-    parsed = urlparse(resource.uri)
-    params = parse_qs(parsed.query)
-    params.update(new_params)
-    query = urlencode(params)
-    new_uri = urlunparse(parsed._replace(query=query))
-    out = Resource(new_uri, data=resource.data, adapter=resource.adapter)
-    return out
-
+from dml_util.common import update_query
 
 if __name__ == "__main__":
     dml = Dml()
@@ -21,7 +12,7 @@ if __name__ == "__main__":
         dag.batch = dml.load("batch").result
         with open(Path(__file__).parent / "example_script.py") as f:
             script = f.read()
-        dag.fn = update_uri_query(
+        dag.fn = update_query(
             dag.batch.value(),
             {"script": script, "image": "python:3.12"},
         )

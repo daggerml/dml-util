@@ -12,6 +12,11 @@
     "Bucket": {
       "Type": "String",
       "Description": "What bucket to use"
+    },
+    "Prefix": {
+      "Type": "String",
+      "Default": "jobs",
+      "Description": "What prefix to use"
     }
   },
   "Resources": {
@@ -208,7 +213,7 @@
               "Statement": [
                 {
                   "Effect": "Allow",
-                  "Action": ["s3:Get*", "s3:Put*", "s3:Delete*", "s3:List*"],
+                  "Action": ["s3:*"],
                   "Resource": [
                     {
                       "Fn::Sub": "arn:aws:s3:::${Bucket}/*"
@@ -263,10 +268,16 @@
                 },
                 {
                   "Effect": "Allow",
-                  "Action": ["s3:PutObject", "s3:GetObject", "s3:HeadObject"],
+                  "Action": ["s3:*"],
                   "Resource": [
                     {
                       "Fn::Sub": "arn:aws:s3:::${Bucket}/*"
+                    },
+                    {
+                      "Fn::Sub": "arn:aws:s3:::${Bucket}/"
+                    },
+                    {
+                      "Fn::Sub": "arn:aws:s3:::${Bucket}"
                     }
                   ]
                 },
@@ -424,7 +435,7 @@
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "FunctionName": { "Fn::Sub": "${AWS::StackName}-adapter" },
-        "Handler": "dml_lambda.main.Batch.handler",
+        "Handler": "impl.handler",
         "Role": { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] },
         "Code": null,
         "Runtime": "python3.12",
@@ -432,7 +443,7 @@
         "MemorySize": 128,
         "Environment": {
           "Variables": {
-            "DML_S3_PREFIX": "jobs",
+            "DML_S3_PREFIX": { "Ref": "Prefix" },
             "DML_S3_BUCKET": { "Ref": "Bucket" },
             "GPU_QUEUE": { "Ref": "GpuJobQueue" },
             "CPU_QUEUE": { "Ref": "CpuJobQueue" },

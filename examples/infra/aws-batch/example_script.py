@@ -3,7 +3,7 @@ def main():
     try:
         import subprocess
 
-        subprocess.check_call(["pip", "install", "boto3", "daggerml==0.0.26", "daggerml-cli==0.0.16"])
+        subprocess.check_call(["pip", "install", "boto3", "dml-util==0.0.2"])
     except Exception as e:
         print("ruh roh! can't install libs!", e)
         raise
@@ -18,7 +18,7 @@ def main():
 
     def handler(dump):
         p = urlparse(OUTPUT_LOC)
-        (boto3.client("s3").put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode()))
+        boto3.client("s3").put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
 
     p = urlparse(INPUT_LOC)
     data = boto3.client("s3").get_object(Bucket=p.netloc, Key=p.path[1:])["Body"].read().decode()

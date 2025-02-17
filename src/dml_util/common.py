@@ -12,12 +12,14 @@ BUCKET = os.getenv("DML_S3_BUCKET")
 PREFIX = os.getenv("DML_S3_PREFIX")
 SCRIPT_EXEC = Resource("dml-util-script-exec", adapter="dml-util-local-adapter")
 DOCKER_EXEC = Resource("dml-util-docker-exec", adapter="dml-util-local-adapter")
+CFN_EXEC = Resource("dml-util-cfn-exec", adapter="dml-util-local-adapter")
 
 
 def compute_hash(obj, chunk_size=8192, hash_algorithm="sha256"):
     hash_fn = hashlib.new(hash_algorithm)
     while chunk := obj.read(chunk_size):
         hash_fn.update(chunk)
+    obj.seek(0)
     return hash_fn.hexdigest()
 
 

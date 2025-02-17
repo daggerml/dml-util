@@ -29,6 +29,12 @@ def get_client(name):
     return boto3.client(name, config=config)
 
 
+class Error(Exception):
+    def __init__(self, message, state):
+        super().__init__(message)
+        self.state = state
+
+
 @dataclass
 class S3:
     cache_key: str
@@ -42,10 +48,10 @@ class S3:
         p = urlparse(name)
         if p.scheme == "s3":
             return p.netloc, p.path[1:]
-        return S3_BUCKET, f"{self.prefix}/{self.name}"
+        return S3_BUCKET, f"{self.prefix}/{name}"
 
     def uri(self, name):
-        return f"s3://{S3_BUCKET}/{self.key(name)}"
+        return f"s3://{S3_BUCKET}/{self.prefix}/{name}"
 
     def get(self, name):
         bucket, key = self.bucket_key(name)
@@ -136,12 +142,10 @@ class Dynamo:
         logger.info("releasing lock for %r", self.cache_key)
         return self._update(
             key,
-            UpdateExpression="REMOVE #lk SET",
+            UpdateExpression="REMOVE #lk",
             ConditionExpression="#lk = :lk",
-            ExpressionAttributeNames={"#lk": "lock_key", "#ut": "update_time"},
-            ExpressionAttributeValues={
-                ":lk": {"S": self.run_id},
-            },
+            ExpressionAttributeNames={"#lk": "lock_key"},
+            ExpressionAttributeValues={":lk": {"S": self.run_id}},
         )
 
     def delete(self):
@@ -166,7 +170,7 @@ class Runner:
     cache_key: str
     kwargs: "any"
     dump: str
-    s3 = field(init=False)
+    s3: S3 = field(init=False)
 
     def __post_init__(self):
         self.s3 = S3(self.cache_key)
@@ -183,16 +187,13 @@ class Runner:
             info = dynamo.get()
             state, msg, dump = self.update(info)
             dynamo.delete() if state is None else dynamo.put(state)
-            return {"status": 200, "message": self.fmt(msg), "dump": None}
+            return {"status": 200, "message": self.fmt(msg), "dump": dump}
         except Exception as e:
-            if DELETE_DYNAMO_ON_FAIL:
+            if (isinstance(e, Error) and e.state is None) or DELETE_DYNAMO_ON_FAIL:
                 dynamo.delete()
+            elif isinstance(e, Error):
+                dynamo.put(state)
             msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
             return {"status": 400, "message": msg, "dump": None}
         finally:
             dynamo.unlock()
-
-    @classmethod
-    def handler(cls, event, context):
-        self = cls(**event)
-        return self.run()

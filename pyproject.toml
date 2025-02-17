@@ -45,6 +45,7 @@ dml-util-lambda-adapter = "dml_util.adapter:lambda_"
 dml-util-local-adapter = "dml_util.adapter:local_"
 dml-util-script-exec = "dml_util.executor:ScriptRunner.cli"
 dml-util-docker-exec = "dml_util.executor:DockerRunner.cli"
+dml-util-cfn-exec = "dml_util.executor:CloudformationRunner.cli"
 
 [project.urls]
 Documentation = "https://github.com/daggerml/dml-util#readme"

@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from io import BytesIO
 from tempfile import NamedTemporaryFile
+from urllib.parse import urlparse
 
 import boto3
 from daggerml import Resource
@@ -14,6 +15,12 @@ class S3:
     bucket: str = BUCKET
     prefix: str = PREFIX
     client: "any" = field(default_factory=lambda: boto3.client("s3"))
+
+    def parse_uri(self, uri):
+        p = urlparse(uri)
+        if p.scheme == "s3":
+            return p.netloc, p.path[1:]
+        return self.bucket, f"{self.prefix}/{uri}"
 
     def tar(self, dml, path, excludes=()):
         exclude_flags = [["--exclude", x] for x in excludes]
@@ -37,8 +44,8 @@ class S3:
         data = open(filepath, "rb") if data is None else BytesIO(data)
         try:
             hash_ = compute_hash(data)
-            key = f"{self.prefix}/{hash_}" + (f".{suffix}" if suffix else "")
-            self.client.upload_file_obj(data, self.bucket, key)
+            key = f"{self.prefix}/{hash_}" + (suffix or "")
+            self.client.upload_fileobj(data, self.bucket, key)
             return Resource(f"s3://{self.bucket}/{key}")
         finally:
             if filepath is not None:

@@ -1,11 +1,10 @@
 import json
 import logging
 import os
-from dataclasses import dataclass, field
 from textwrap import dedent
 
 from botocore.exceptions import ClientError
-from dml_lambda.util import S3_BUCKET, Runner, get_client
+from util import S3_BUCKET, Error, Runner, get_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -17,9 +16,8 @@ SUCCESS_STATE = "SUCCEEDED"
 FAILED_STATE = "FAILED"
 
 
-@dataclass
 class Batch(Runner):
-    client = field(default_factory=lambda: get_client("batch"))
+    client = get_client("batch")
 
     def submit(self):
         image = self.kwargs.pop("image")[-1]
@@ -70,36 +68,33 @@ class Batch(Runner):
         job_id = response["jobId"]
         return {"job_def": job_def, "job_id": job_id}
 
+    def finish(self, state, msg):
+        job_id = "???"
+        if state:
+            self.gc(state["job_def"])
+            job_id = state["job_id"]
+        if not self.s3.exists("output.dump"):
+            raise Error(f"{job_id = } {msg} : no output", None)
+        dump = self.s3.get("output.dump")
+        msg = f"{job_id = } {msg}."
+        return None, msg, dump
+
     def update(self, state):
         if state is None:
+            if self.s3.exists("output.dump"):
+                return self.finish(state, "cached")
             state = self.submit()
             job_id = state["job_id"]
             return state, f"{job_id = } submitted", None
-        job_id = state["job_id"]
+        job_id = state["job_id"] if state else "???"
         response = self.client.describe_jobs(jobs=[job_id])
+        logger.info("Job %r (cache_key: %r) description: %r", job_id, self.cache_key, response)
+        if len(response) == 0:
+            return self.finish(state, "does not exist")
         job = response["jobs"][0]
         status = job["status"]
-        if status == SUCCESS_STATE:
-            self.gc(state["job_def"])
-            if self.s3.exists("output.dump"):
-                dump = self.s3.get("output.dump")
-                return None, f"{job_id = } succeeded.", dump
-            msg = f"Job {job_id} succeeded but did not write output."
-            raise RuntimeError(msg)
-        if status == FAILED_STATE:
-            self.gc(state["job_def"])
-            failure_reason = job.get("attempts", [{}])[-1].get("container", {}).get("reason", "Unknown failure reason")
-            status_reason = job.get("statusReason", "No additional status reason provided.")
-            msg = json.dumps(
-                {
-                    "job_id": job_id,
-                    "cache_key": self.cache_key,
-                    "failure_reason": failure_reason,
-                    "status_reason": status_reason,
-                },
-                separators=(",", ":"),
-            )
-            raise RuntimeError(msg)
+        if status in [SUCCESS_STATE, FAILED_STATE]:
+            return self.finish(state, f"finished with status {status}")
         msg = f"{job_id = } {status}"
         return state, msg, None
 
@@ -113,3 +108,8 @@ class Batch(Runner):
                 raise
             if "DEREGISTERED" not in e.response.get("Error", {}).get("Message"):
                 raise
+
+
+def handler(event, context):
+    self = Batch(**event)
+    return self.run()

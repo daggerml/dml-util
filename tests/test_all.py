@@ -150,3 +150,9 @@ class TestBasic(TestCase):
                     d0.f0 = dag_fn
                     with self.assertRaises(Error):
                         d0.n0 = d0.f0(1, 2, 3)
+
+    def test_s3(self):
+        s3 = S3()
+        bkt = "asdf"
+        pre = "qwer"
+        assert s3.parse_uri(f"s3://{bkt}/{pre}") == (bkt, pre)
