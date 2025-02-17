@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-import json
 from pathlib import Path
-from time import time
 
-from daggerml import Dml, Resource
+from daggerml import Dml
 
 from dml_util import S3, dkr_build, dkr_push, funkify, query_update
 
