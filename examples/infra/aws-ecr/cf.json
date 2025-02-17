@@ -1,0 +1,20 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "CloudFormation template to create an ECR repository",
+  "Resources": {
+    "MyECRRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": "dml"
+      }
+    }
+  },
+  "Outputs": {
+    "Uri": {
+      "Description": "URI of the created ECR repository",
+      "Value": {
+        "Fn::GetAtt": ["MyECRRepository", "RepositoryUri"]
+      }
+    }
+  }
+}

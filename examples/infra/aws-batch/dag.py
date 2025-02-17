@@ -37,7 +37,6 @@ if __name__ == "__main__":
 
     parser = ArgumentParser(description="Process a name and an optional update flag.")
     parser.add_argument("-n", "--name", type=str, default="batch")
-    parser.add_argument("-u", "--update", action="store_true")
     parser.add_argument("-v", "--verify", action="store_true")
     args = parser.parse_args()
     if args.verify:

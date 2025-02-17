@@ -77,12 +77,11 @@ def funkify(fn=None, base_resource=SCRIPT_EXEC, params=None, extra_fns=(), extra
             p = urlparse(indata)
             if p.scheme == "s3":
                 import boto3
-                data = (
+                return (
                     boto3.client("s3")
                     .get_object(Bucket=p.netloc, Key=p.path[1:])
                     ["Body"].read().decode()
                 )
-                return data
             with open(indata) as f:
                 return f.read()
 
@@ -91,7 +90,7 @@ def funkify(fn=None, base_resource=SCRIPT_EXEC, params=None, extra_fns=(), extra
             p = urlparse(outdata)
             if p.scheme == "s3":
                 import boto3
-                data = (
+                return (
                     boto3.client("s3")
                     .put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
                 )

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from daggerml import Dml, Resource
+from daggerml import Dml
 
 from dml_util.common import update_query
 

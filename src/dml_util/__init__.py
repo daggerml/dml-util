@@ -1,4 +1,4 @@
-from dml_util.common import DOCKER_EXEC, SCRIPT_EXEC, funkify
+from dml_util.common import CFN_EXEC, DOCKER_EXEC, SCRIPT_EXEC, funkify
 from dml_util.funk import dkr_build, dkr_push, query_update
 from dml_util.ingest import S3
 

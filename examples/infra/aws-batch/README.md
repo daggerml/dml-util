@@ -1,18 +1,15 @@
-# What is this?
+# AWS Batch
 
-We're going to make a batch cluster that is set up to be used in daggerml.
-The easiest way to do this is to write a lambda that can handle all the
-daggerml calls.
+## Dependencies
 
-To get started, create and activate a virtual env and run
-`python -m pip install -r requirements.txt`.
+## The example
 
-To run the setup, run `python ./batch_dag.py`. Internally, this will read
-`entrypoint.py` and insert it into the appropriate spot in `cf.json`, and then
-deploy that stack to cloudformation using boto3.
+1. Read script
+2. funkify the script with the python3.12 base image for batch (we don't have
+   ecr yet, so this is the best we can do).
+3. run that image on aws batch
 
-Next to use the cluster (in the simplest way), we'll use a standard python3.12
-docker image and compute the sum in batch.
+## Notes
 
-To do that, we'll run `python ./example.py`. Internally, that will read
-`example_script.py` and submit that script to our aws batch cluster.
+- We don't need any custom images -- we just need to pip install daggerml and
+  daggerml-cli
