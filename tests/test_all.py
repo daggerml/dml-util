@@ -8,7 +8,7 @@ from unittest import TestCase, mock, skipUnless
 from urllib.parse import urlparse
 
 import boto3
-from daggerml.core import Dml, Error
+from daggerml.core import Dml, Error, Node
 
 from dml_util import DOCKER_EXEC, S3, dkr_build, funkify, query_update
 from dml_util.common import BUCKET, PREFIX
@@ -140,7 +140,7 @@ class TestBasic(TestCase):
     def test_funkify_errors(self):
         @funkify
         def dag_fn(dag):
-            dag.result = sum(*dag.argv[1:].value()) / 0
+            dag.result = sum(dag.argv[1:].value()) / 0
             return dag.result
 
         with TemporaryDirectory() as fn_cache_dir:
@@ -156,3 +156,20 @@ class TestBasic(TestCase):
         bkt = "asdf"
         pre = "qwer"
         assert s3.parse_uri(f"s3://{bkt}/{pre}") == (bkt, pre)
+
+    def test_monkey_patch(self):
+        @funkify
+        def dag_fn(dag):
+            dag.result = sum(dag.argv[1:].value())
+            return dag.result
+
+        vals = [1, 2, 3]
+        with TemporaryDirectory() as fn_cache_dir:
+            with mock.patch.dict(os.environ, DML_FN_CACHE_DIR=fn_cache_dir):
+                with Dml() as dml:
+                    d0 = dml.new("d0", "d0")
+                    val = d0(DOCKER_EXEC)
+                    assert isinstance(val, Node)
+                    assert val.value() == DOCKER_EXEC
+                    d0.n0 = d0(dag_fn)(*vals)
+                    assert d0.n0.value() == sum(vals)
