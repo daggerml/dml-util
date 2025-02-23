@@ -3,7 +3,7 @@ import os
 from textwrap import dedent
 
 from botocore.exceptions import ClientError
-from util import S3_BUCKET, Error, Runner, get_client
+from util import S3_BUCKET, DagRunError, Runner, get_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -21,7 +21,8 @@ class Batch(Runner):
     def submit(self):
         image = self.kwargs.pop("image")[-1]
         script = self.kwargs.pop("script")[-1]
-        container_props = {**DFLT_PROP, **self.kwargs}
+        container_props = DFLT_PROP
+        container_props.update({k: v[-1] for k, v in self.kwargs})
         needs_gpu = any(x["type"] == "GPU" for x in container_props.get("resourceRequirements", []))
         logger.info("createing job definition with name: %r", f"fn-{self.cache_key}")
         response = self.client.register_job_definition(
@@ -51,6 +52,10 @@ class Batch(Runner):
                         "name": "DML_S3_PREFIX",
                         "value": self.s3.prefix,
                     },
+                    {
+                        "name": "DML_CACHE_KEY",
+                        "value": self.cache_key,
+                    },
                 ],
                 "jobRoleArn": os.environ["BATCH_TASK_ROLE_ARN"],
                 **container_props,
@@ -73,12 +78,13 @@ class Batch(Runner):
             self.gc(state["job_def"])
             job_id = state["job_id"]
         if not self.s3.exists("output.dump"):
-            raise Error(f"{job_id = } {msg} : no output", None)
+            raise DagRunError(f"{job_id = } {msg} : no output", None)
         dump = self.s3.get("output.dump")
         msg = f"{job_id = } {msg}."
         return None, msg, dump
 
     def update(self, state):
+        # FIXME: don't cache errors
         if state is None:
             if self.s3.exists("output.dump"):
                 return self.finish(state, "cached")

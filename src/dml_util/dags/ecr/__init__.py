@@ -9,3 +9,7 @@ def load():
     with open(_here_ / "cf.json") as f:
         js = json.load(f)
     return js, {}, "Uri", None
+
+
+if __name__ == "__main__":
+    print(json.dumps(list(load())))

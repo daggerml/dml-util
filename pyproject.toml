@@ -26,15 +26,17 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-  "daggerml==0.0.26",
-  "daggerml-cli==0.0.16",
   "boto3",
+  "pyyaml",
 ]
 
 [project.optional-dependencies]
+dml = [
+  "daggerml==0.0.26",
+  "daggerml-cli==0.0.16",
+]
 docker = ["docker==7.1.0"]
 test = [
-  "docker==7.1.0",
   "pytest",
   "pytest-cov",
   "moto[all,server]",
@@ -85,8 +87,8 @@ artifacts = [
 python="3.10"
 dependencies = [
   "twine",
-  "dml-util[test]",
 ]
+features = ["dml", "docker", "test"]
 
 [tool.hatch.envs.default.scripts]
 test = 'pytest . {args}'
@@ -103,6 +105,17 @@ template = "default"
 
 [[tool.hatch.envs.test-all.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+[tool.hatch.envs.test-baseutil]
+python="3.10"
+features = ["test"]
+
+[tool.hatch.envs.test-baseutil.env-vars]
+PYTHONDONTWRITEBYTECODE = "1"
+AWS_ACCESS_KEY_ID  = "doesnotexist"
+AWS_SECRET_ACCESS_KEY  = "doesnotexist"
+DML_S3_BUCKET = "dml-doesnotexist"
+DML_S3_PREFIX = "jobs"
 
 
 [tool.ruff]

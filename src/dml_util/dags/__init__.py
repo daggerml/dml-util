@@ -9,9 +9,8 @@ from time import time
 
 from daggerml import Dml, Resource
 
-from dml_util.common import CFN_EXEC
-
 _here_ = Path(__file__).parent
+CFN_EXEC = Resource("dml-util-cfn-exec", adapter="dml-util-local-adapter")
 
 
 def imp(name):
@@ -23,17 +22,22 @@ def main():
 
     parser = ArgumentParser(description="Spin up a known cfn stack (in a dag).")
     parser.add_argument("name")
+    parser.add_argument("-f", "--filepath")
     args = parser.parse_args()
-    if args.name in ["list"]:
+    if args.name == "list":
         here = os.path.dirname(__file__)
         for x in os.listdir(here):
             if os.path.isdir(f"{here}/{x}"):
                 print(x)
         sys.exit(0)
     with Dml().new(args.name, f"creating {args.name} cfn stack") as dag:
-        mod = imp(args.name)
-        js, params, output_name, adapter = mod.load()
-        dag.tpl = js
+        if args.filepath is None:
+            mod = imp(args.name)
+            tpl, params, output_name, adapter = mod.load()
+        else:
+            resp = subprocess.run([args.filepath], check=True, capture_output=True, text=True)
+            tpl, params, output_name, adapter = json.loads(resp.stdout)
+        dag.tpl = tpl
         dag.params = params
         dag.adapter = adapter
         dag.output_name = output_name

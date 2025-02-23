@@ -14,7 +14,7 @@ from daggerml import Dml
 logger = logging.getLogger(__name__)
 
 
-class Runner:
+class LocalRunner:
     name = "?"
 
     def __init__(self, data):
@@ -71,7 +71,7 @@ class Runner:
             print(dump)
 
 
-class ScriptRunner(Runner):
+class ScriptRunner(LocalRunner):
     name = "script"
 
     def submit(self):
@@ -123,7 +123,7 @@ class ScriptRunner(Runner):
         raise RuntimeError(msg)
 
 
-class DockerRunner(Runner):
+class DockerRunner(LocalRunner):
     name = "dkr"
 
     def _run_command(self, command):
@@ -192,7 +192,7 @@ class DockerRunner(Runner):
             return None, msg, self.maybe_complete(container_id, container_status)
 
 
-class CloudformationRunner(Runner):
+class CloudformationRunner(LocalRunner):
     name = "cfn"
 
     def fmt(self, name, stack_id, status, raw_status):

@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from dml_util.ingest import S3
+from dml_util.common import S3
 
 _here_ = Path(__file__).parent
 
