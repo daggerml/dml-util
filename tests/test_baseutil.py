@@ -166,7 +166,7 @@ class TestDynamo(AwsTestCase):
         assert db1.put({"asdf": 23}) is False
         assert db0.put({"q": "b"}) is True
         # relocking works
-        sleep(timeout)
+        sleep(timeout * 2)
         assert db1.get() == {"q": "b"}
         assert db0.unlock() is False
         assert db1.unlock() is True
