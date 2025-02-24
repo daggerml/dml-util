@@ -2,22 +2,15 @@ import json
 import subprocess
 import sys
 from shutil import which
-from urllib.parse import parse_qs, urlparse
 
 import boto3
 
 
 def local_():
-    prsd = urlparse(sys.argv[1])
-    prog = which(prsd.path)
-    data = {
-        "dump": sys.stdin.read().strip(),
-        "cache_key": sys.argv[2],
-        "kwargs": parse_qs(prsd.query),
-    }
+    prog = which(sys.argv[1])
     proc = subprocess.run(
         [prog],
-        input=json.dumps(data),
+        input=sys.stdin.read(),
         stdout=subprocess.PIPE,  # stderr passes through to the parent process
         text=True,
     )
@@ -30,18 +23,11 @@ def local_():
 
 
 def lambda_():
-    parsed_arn = urlparse(sys.argv[1])
-    arn = parsed_arn.scheme + ":" + parsed_arn.netloc + parsed_arn.path
-    payload = {
-        "dump": sys.stdin.read().strip(),
-        "cache_key": sys.argv[2],
-        "kwargs": parse_qs(parsed_arn.query),
-    }
     response = boto3.client("lambda").invoke(
-        FunctionName=arn,
+        FunctionName=sys.argv[1],
         InvocationType="RequestResponse",
         LogType="Tail",
-        Payload=json.dumps(payload).encode(),
+        Payload=sys.stdin.read().strip().encode(),
     )
     payload = json.loads(response["Payload"].read())
     if payload.get("message") is not None:

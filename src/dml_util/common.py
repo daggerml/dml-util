@@ -2,7 +2,6 @@ import re
 from functools import partial
 from inspect import getsource
 from textwrap import dedent
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from daggerml import Resource
 
@@ -10,20 +9,10 @@ SCRIPT_EXEC = Resource("dml-util-script-exec", adapter="dml-util-local-adapter")
 DOCKER_EXEC = Resource("dml-util-docker-exec", adapter="dml-util-local-adapter")
 
 
-def parse_query(resource):
-    parsed = urlparse(resource.uri)
-    params = parse_qs(parsed.query)
-    return params
-
-
 def update_query(resource, new_params):
-    parsed = urlparse(resource.uri)
-    params = parse_qs(parsed.query)
-    params = {k: v[0] for k, v in params.items()}
-    params.update(new_params)
-    query = urlencode(params, doseq=True)
-    new_uri = urlunparse(parsed._replace(query=query))
-    out = Resource(new_uri, data=resource.data, adapter=resource.adapter)
+    data = resource.data or {}
+    data.update(new_params)
+    out = Resource(resource.uri, data=data, adapter=resource.adapter)
     return out
 
 

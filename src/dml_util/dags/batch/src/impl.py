@@ -1,9 +1,10 @@
+# TODO:  should install dml-util and use it directly
 import logging
 import os
 from textwrap import dedent
 
+from baseutil import S3_BUCKET, S3_PREFIX, DagRunError, LambdaRunner, get_client
 from botocore.exceptions import ClientError
-from util import S3_BUCKET, DagRunError, Runner, get_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -15,14 +16,14 @@ SUCCESS_STATE = "SUCCEEDED"
 FAILED_STATE = "FAILED"
 
 
-class Batch(Runner):
+class Batch(LambdaRunner):
     client = get_client("batch")
 
     def submit(self):
-        image = self.kwargs.pop("image")[-1]
-        script = self.kwargs.pop("script")[-1]
+        image = self.kwargs.pop("image")
+        script = self.kwargs.pop("script")
         container_props = DFLT_PROP
-        container_props.update({k: v[-1] for k, v in self.kwargs})
+        container_props.update(self.kwargs)
         needs_gpu = any(x["type"] == "GPU" for x in container_props.get("resourceRequirements", []))
         logger.info("createing job definition with name: %r", f"fn-{self.cache_key}")
         response = self.client.register_job_definition(
@@ -38,11 +39,11 @@ class Batch(Runner):
                 "environment": [
                     {
                         "name": "DML_INPUT_LOC",
-                        "value": self.s3.put(self.dump, "input.dump"),
+                        "value": self.s3.put(self.dump.encode(), name="input.dump"),
                     },
                     {
                         "name": "DML_OUTPUT_LOC",
-                        "value": self.s3.uri("output.dump"),
+                        "value": self.s3.name2uri("output.dump"),
                     },
                     {
                         "name": "DML_S3_BUCKET",
@@ -50,7 +51,7 @@ class Batch(Runner):
                     },
                     {
                         "name": "DML_S3_PREFIX",
-                        "value": self.s3.prefix,
+                        "value": S3_PREFIX,
                     },
                     {
                         "name": "DML_CACHE_KEY",
@@ -75,7 +76,7 @@ class Batch(Runner):
     def finish(self, state, msg):
         job_id = "???"
         if state:
-            self.gc(state["job_def"])
+            self.gc(state)
             job_id = state["job_id"]
         if not self.s3.exists("output.dump"):
             raise DagRunError(f"{job_id = } {msg} : no output", None)
@@ -83,27 +84,34 @@ class Batch(Runner):
         msg = f"{job_id = } {msg}."
         return None, msg, dump
 
-    def update(self, state):
-        # FIXME: don't cache errors
-        if state is None:
-            if self.s3.exists("output.dump"):
-                return self.finish(state, "cached")
-            state = self.submit()
-            job_id = state["job_id"]
-            return state, f"{job_id = } submitted", None
-        job_id = state["job_id"] if state else "???"
+    def describe_job(self, state):
+        job_id = state["job_id"]
         response = self.client.describe_jobs(jobs=[job_id])
         logger.info("Job %r (cache_key: %r) description: %r", job_id, self.cache_key, response)
         if len(response) == 0:
-            return self.finish(state, "does not exist")
+            return None, None
         job = response["jobs"][0]
         status = job["status"]
-        if status in [SUCCESS_STATE, FAILED_STATE]:
+        return job_id, status
+
+    def update(self, state):
+        if state == {}:
+            state = self.submit()
+            job_id = state["job_id"]
+            return state, f"{job_id = } submitted", None
+        job_id, status = self.describe_job(state)
+        if status in [SUCCESS_STATE, FAILED_STATE, None]:
             return self.finish(state, f"finished with status {status}")
         msg = f"{job_id = } {status}"
         return state, msg, None
 
-    def gc(self, job_def):
+    def gc(self, state):
+        job_id, status = self.describe_job(state)
+        try:
+            self.client.cancel_job(jobId=job_id, reason="cancellation")
+        except ClientError as e:
+            pass
+        job_def = state["job_def"]
         try:
             self.client.deregister_job_definition(jobDefinition=job_def)
             logger.info("Successfully deregistered: %r", job_def)
@@ -114,7 +122,9 @@ class Batch(Runner):
             if "DEREGISTERED" not in e.response.get("Error", {}).get("Message"):
                 raise
 
+    def delete(self, state):
+        self.gc(state)
+        super().delete(state)
 
-def handler(event, context):
-    self = Batch(**event)
-    return self.run()
+
+handler = Batch.handler

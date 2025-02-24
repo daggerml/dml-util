@@ -32,8 +32,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dml = [
-  "daggerml==0.0.26",
-  "daggerml-cli==0.0.16",
+  "daggerml==0.0.29",
+  "daggerml-cli==0.0.19",
 ]
 docker = ["docker==7.1.0"]
 test = [

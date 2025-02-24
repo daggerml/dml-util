@@ -93,7 +93,7 @@ class TestS3(AwsTestCase):
         context = _root_ / "tests/assets/dkr-context"
         s3 = S3Store()
         assert s3.bucket == S3_BUCKET
-        assert s3.prefix == S3_PREFIX
+        assert s3.prefix.startswith(f"{S3_PREFIX}/")
         with Dml() as dml:
             s3_tar = s3.tar(dml, context)
             with TemporaryDirectory() as tmpd:
@@ -148,19 +148,19 @@ class TestDynamo(AwsTestCase):
 
     def test_dynamo_db_ops(self):
         data = {"q": "b"}
-        db = baseutil.Dynamo("test-key", tb=self.tb)
+        db = baseutil.DynamoState("test-key", tb=self.tb)
         info = db.get()
         assert info == {}
         assert db.put(data)
         assert db.get() == data
         assert db.unlock()
-        db2 = baseutil.Dynamo("test-key", tb=self.tb)
+        db2 = baseutil.DynamoState("test-key", tb=self.tb)
         assert db2.get() == data
 
     def test_dynamo_locking(self):
         timeout = 0.05
-        db0 = baseutil.Dynamo("test-key", timeout=timeout, tb=self.tb)
-        db1 = baseutil.Dynamo("test-key", timeout=timeout, tb=self.tb)
+        db0 = baseutil.DynamoState("test-key", timeout=timeout, tb=self.tb)
+        db1 = baseutil.DynamoState("test-key", timeout=timeout, tb=self.tb)
         assert db0.get() == {}
         assert db1.get() is None
         assert db1.put({"asdf": 23}) is False

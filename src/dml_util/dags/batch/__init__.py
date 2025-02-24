@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from dml_util.common import S3
+from dml_util.baseutil import S3_BUCKET, S3_PREFIX, S3Store
 
 _here_ = Path(__file__).parent
 
@@ -21,7 +21,6 @@ def zipit(directory_path, output_zip):
 
 
 def zip_up(s3, path):
-    s3 = S3()
     with NamedTemporaryFile(suffix=".zip") as tmpf:
         zipit(path, tmpf.name)
         tmpf.flush()
@@ -29,11 +28,11 @@ def zip_up(s3, path):
 
 
 def load():
-    s3 = S3()
+    s3 = S3Store()
     with open(_here_ / "cf.json") as f:
         js = json.load(f)
     zipfile = zip_up(s3, _here_ / "src")
     code_data = dict(zip(["S3Bucket", "S3Key"], s3.parse_uri(zipfile.uri)))
     js["Resources"]["Fn"]["Properties"]["Code"] = code_data
-    params = {"Bucket": s3.bucket, "Prefix": s3.prefix}
+    params = {"Bucket": S3_BUCKET, "Prefix": S3_PREFIX}
     return js, params, "LambdaFunctionArn", "dml-util-lambda-adapter"

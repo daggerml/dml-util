@@ -27,7 +27,7 @@ def main():
     if args.name == "list":
         here = os.path.dirname(__file__)
         for x in os.listdir(here):
-            if os.path.isdir(f"{here}/{x}"):
+            if os.path.isdir(f"{here}/{x}") and x != "__pycache__":
                 print(x)
         sys.exit(0)
     with Dml().new(args.name, f"creating {args.name} cfn stack") as dag:

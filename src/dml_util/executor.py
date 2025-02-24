@@ -1,71 +1,36 @@
-import argparse
 import json
 import logging
 import os
 import subprocess
 import sys
-import time
-from pathlib import Path
+from contextlib import contextmanager
+from dataclasses import dataclass
 
 import boto3
 from botocore.exceptions import ClientError
 from daggerml import Dml
 
+from dml_util.baseutil import DagRunError, LocalState, Runner
+
 logger = logging.getLogger(__name__)
 
 
-class LocalRunner:
-    name = "?"
+@dataclass
+class LocalRunner(Runner):
+    state_class = LocalState
 
-    def __init__(self, data):
-        self.cache_key = data["cache_key"]
-        self.kwargs = data["kwargs"]
-        self.dump = data["dump"]
-        if "DML_FN_CACHE_LOC" in os.environ:
-            self.cache_dir = os.environ["DML_FN_CACHE_LOC"]
-        elif "DML_FN_CACHE_DIR" in os.environ:
-            config_dir = os.environ["DML_FN_CACHE_DIR"]
-            self.cache_dir = f"{config_dir}/cache/dml-util/{self.cache_key}"
-        else:
-            status = subprocess.run(["dml", "status"], check=True, capture_output=True)
-            config_dir = json.loads(status.stdout.decode())["config_dir"]
-            self.cache_dir = f"{config_dir}/cache/dml-util/{self.cache_key}"
-        os.makedirs(self.cache_dir, exist_ok=True)
-        self.state_file = Path(self.cache_dir) / "status"
-
-    def put_state(self, state):
-        status_data = {
-            "state": state,
-            "timestamp": time.time(),
-        }
-        with open(self.state_file, "w") as f:
-            json.dump(status_data, f)
-
-    def get_state(self):
-        if not self.state_file.exists():
-            return None
-        with open(self.state_file, "r") as f:
-            return json.load(f)["state"]
-
-    def del_state(self):
-        if os.path.exists(self.state_file):
-            os.unlink(self.state_file)
-
-    def run(self):
-        state = self.get_state()
-        state, msg, dump = self.update(state)
-        self.del_state() if state is None else self.put_state(state)
-        return msg, dump
+    @property
+    def cache_dir(self):
+        return self.state.cache_dir
 
     @classmethod
     def cli(cls):
-        parser = argparse.ArgumentParser()
-        parser.add_argument("-d", "--data", default="-", type=argparse.FileType("r"))
-        args = parser.parse_args()
-        data = json.loads(args.data.read())
-        self = cls(data)
-        msg, dump = self.run()
-        msg = f"{self.name} [{self.cache_key}] :: {msg}"
+        data = json.loads(sys.stdin.read())
+        try:
+            dump, msg = cls(**data).run()
+        except DagRunError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
         print(msg, file=sys.stderr)
         if dump is not None:
             print(dump)
@@ -76,7 +41,7 @@ class ScriptRunner(LocalRunner):
 
     def submit(self):
         with open(f"{self.cache_dir}/script", "w") as f:
-            f.write(self.kwargs["script"][-1])
+            f.write(self.kwargs["script"])
         subprocess.run(["chmod", "+x", f"{self.cache_dir}/script"], check=True)
         with open(f"{self.cache_dir}/input.dump", "w") as f:
             f.write(self.dump)
@@ -85,6 +50,7 @@ class ScriptRunner(LocalRunner):
             {
                 "DML_INPUT_LOC": f"{self.cache_dir}/input.dump",
                 "DML_OUTPUT_LOC": f"{self.cache_dir}/output.dump",
+                "DML_CACHE_KEY": self.cache_key,
             }
         )
         proc = subprocess.Popen(
@@ -97,10 +63,11 @@ class ScriptRunner(LocalRunner):
         )
         return proc.pid
 
-    def update(self, pid):
+    def update(self, state):
+        pid = state.get("pid")
         if pid is None:
             pid = self.submit()
-            return pid, f"{pid = } started", None
+            return {"pid": pid}, f"{pid = } started", None
 
         def proc_exists(pid):
             try:
@@ -112,7 +79,7 @@ class ScriptRunner(LocalRunner):
             return True
 
         if proc_exists(pid):
-            return pid, f"{pid = } running", None
+            return state, f"{pid = } running", None
         elif os.path.isfile(f"{self.cache_dir}/output.dump"):
             with open(f"{self.cache_dir}/output.dump") as f:
                 return None, f"{pid = } finished", f.read()
@@ -121,6 +88,10 @@ class ScriptRunner(LocalRunner):
             with open(f"{self.cache_dir}/stderr", "r") as f:
                 msg = f"{msg}\nSTDERR:\n-------\n{f.read()}"
         raise RuntimeError(msg)
+
+    def delete(self, state):
+        if os.path.exists(f"{self.cache_dir}/output.dump"):
+            os.unlink(f"{self.cache_dir}/output.dump")
 
 
 class DockerRunner(LocalRunner):
@@ -135,7 +106,7 @@ class DockerRunner(LocalRunner):
 
     def submit(self):
         with open(f"{self.cache_dir}/script", "w") as f:
-            f.write(self.kwargs["script"][-1])
+            f.write(self.kwargs["script"])
         subprocess.run(["chmod", "+x", f"{self.cache_dir}/script"], check=True)
         with open(f"{self.cache_dir}/input.dump", "w") as f:
             f.write(self.dump)
@@ -149,9 +120,11 @@ class DockerRunner(LocalRunner):
                 "DML_INPUT_LOC=/opt/dml/input.dump",
                 "-e",
                 "DML_OUTPUT_LOC=/opt/dml/output.dump",
+                "-e",
+                f"DML_CACHE_KEY={self.cache_key!r}",
                 "-d",  # detached
                 *self.kwargs.get("flags", []),
-                self.kwargs["image"][-1],
+                self.kwargs["image"],
                 "/opt/dml/script",
             ],
         )
@@ -178,18 +151,23 @@ class DockerRunner(LocalRunner):
             if os.getenv("DML_DOCKER_CLEANUP") == "1":
                 self._run_command(["docker", "rm", container_id])
 
-    def update(self, container_id):
+    def update(self, state, is_retry=False):
+        container_id = state.get("cid")
         if container_id is None:
             container_id = self.submit()
-            return container_id, f"container {container_id} started", None
+            return {"cid": container_id}, f"container {container_id} started", None
         # Check if container exists and get its status
         exit_code, container_status = self._run_command(["docker", "inspect", "-f", "{{.State.Status}}", container_id])
         container_status = container_status if exit_code == 0 else "no-longer-exists"
         if container_status in ["created", "running", "restarting"]:
-            return container_id, f"container {container_id} running", None
+            return {"cid": container_id}, f"container {container_id} running", None
         elif container_status in ["exited", "paused", "dead", "no-longer-exists"]:
             msg = f"container {container_id} finished with status {container_status!r}"
             return None, msg, self.maybe_complete(container_id, container_status)
+
+    def delete(self, state):
+        if os.path.exists(f"{self.cache_dir}/output.dump"):
+            os.unlink(f"{self.cache_dir}/output.dump")
 
 
 class CloudformationRunner(LocalRunner):
@@ -252,13 +230,13 @@ class CloudformationRunner(LocalRunner):
         msg = self.fmt(name, state["StackId"], "creating", None)
         return state, msg
 
-    def update(self, state):
+    def update(self, state, is_retry=False):
         client = boto3.client("cloudformation")
         result = None
-        if state is None:
+        if state == {}:
             state, msg = self.submit(client)
-            return state, msg, None
-        state, msg = self.describe_stack(client, **state)
+        else:
+            state, msg = self.describe_stack(client, **state)
         if "outputs" in state:
 
             def _handler(dump):
@@ -278,3 +256,25 @@ class CloudformationRunner(LocalRunner):
             except Exception:
                 pass
         return state, msg, result
+
+
+@contextmanager
+def aws_fndag():
+    import os
+    from urllib.parse import urlparse
+
+    import boto3
+    from daggerml import Dml
+
+    INPUT_LOC = os.environ["DML_INPUT_LOC"]
+    OUTPUT_LOC = os.environ["DML_OUTPUT_LOC"]
+
+    def handler(dump):
+        p = urlparse(OUTPUT_LOC)
+        boto3.client("s3").put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
+
+    p = urlparse(INPUT_LOC)
+    data = boto3.client("s3").get_object(Bucket=p.netloc, Key=p.path[1:])["Body"].read().decode()
+    with Dml(data=data, message_handler=handler) as dml:
+        with dml.new("test", "test") as dag:
+            yield dag
