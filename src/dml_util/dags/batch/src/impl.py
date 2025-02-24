@@ -109,7 +109,7 @@ class Batch(LambdaRunner):
         job_id, status = self.describe_job(state)
         try:
             self.client.cancel_job(jobId=job_id, reason="cancellation")
-        except ClientError as e:
+        except ClientError:
             pass
         job_def = state["job_def"]
         try:

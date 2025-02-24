@@ -67,8 +67,8 @@ def exactly_one(**kw):
 
 @dataclass
 class S3Store:
-    bucket: str | None = None
-    prefix: str | None = None
+    bucket: str = None
+    prefix: str = None
     client: "any" = field(default_factory=lambda: boto3.client("s3"))
 
     def __post_init__(self):
