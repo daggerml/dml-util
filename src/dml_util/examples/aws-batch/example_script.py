@@ -3,7 +3,7 @@ def main():
     try:
         import subprocess
 
-        subprocess.check_call(["pip", "install", "boto3", "dml-util==0.0.6"])
+        subprocess.check_call(["pip", "install", "boto3", "dml-util[dml]==0.0.6"])
     except Exception as e:
         print("ruh roh! can't install libs!", e)
         raise

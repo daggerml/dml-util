@@ -36,9 +36,7 @@ class LocalRunner(Runner):
             print(dump)
 
 
-class ScriptRunner(LocalRunner):
-    name = "script"
-
+class Script(LocalRunner):
     def submit(self):
         with open(f"{self.cache_dir}/script", "w") as f:
             f.write(self.kwargs["script"])
@@ -94,9 +92,7 @@ class ScriptRunner(LocalRunner):
             os.unlink(f"{self.cache_dir}/output.dump")
 
 
-class DockerRunner(LocalRunner):
-    name = "dkr"
-
+class Docker(LocalRunner):
     def _run_command(self, command):
         try:
             result = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -170,11 +166,9 @@ class DockerRunner(LocalRunner):
             os.unlink(f"{self.cache_dir}/output.dump")
 
 
-class CloudformationRunner(LocalRunner):
-    name = "cfn"
-
-    def fmt(self, name, stack_id, status, raw_status):
-        return f"{name} : {stack_id} : {status} ({raw_status})"
+class Cfn(LocalRunner):
+    def fmt(self, stack_id, status, raw_status):
+        return f"{stack_id} : {status} ({raw_status})"
 
     def describe_stack(self, client, name, StackId):
         try:
@@ -207,7 +201,7 @@ class CloudformationRunner(LocalRunner):
             raise RuntimeError("cannot create new stack while stack is currently being created")
         else:
             status = "creating"
-        return state, self.fmt(name, state["StackId"], status, raw_status)
+        return state, self.fmt(state["StackId"], status, raw_status)
 
     def submit(self, client):
         with Dml(data=self.dump) as dml:
@@ -227,7 +221,7 @@ class CloudformationRunner(LocalRunner):
                 raise
             resp = old_state
         state = {"name": name, "StackId": resp["StackId"]}
-        msg = self.fmt(name, state["StackId"], "creating", None)
+        msg = self.fmt(state["StackId"], "creating", None)
         return state, msg
 
     def update(self, state, is_retry=False):
