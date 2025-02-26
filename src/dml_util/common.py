@@ -22,10 +22,7 @@ def get_src(f):
     return "\n".join(lines)
 
 
-def funkify(fn=None, base_resource=SCRIPT_EXEC, params=None, extra_fns=(), extra_lines=()):
-    if fn is None:
-        return partial(funkify, base_resource=base_resource, params=params, extra_fns=extra_fns)
-
+def _fnk(base_resource, fn_sources, params, fn_name, extra_lines):
     tpl = dedent(
         """
         #!/usr/bin/env python3
@@ -72,10 +69,24 @@ def funkify(fn=None, base_resource=SCRIPT_EXEC, params=None, extra_fns=(), extra
         """
     ).strip()
     src = tpl.format(
-        src="\n\n".join([get_src(f) for f in [*extra_fns, fn]]),
-        fn_name=fn.__name__,
+        src="\n\n".join(fn_sources),
+        fn_name=fn_name,
         eln="\n".join(extra_lines),
     )
     resource = update_query(base_resource, {"script": src, **(params or {})})
+    return resource
+
+
+def funkify(fn=None, base_resource=SCRIPT_EXEC, params=None, extra_fns=(), extra_lines=()):
+    if fn is None:
+        return partial(
+            funkify,
+            base_resource=base_resource,
+            params=params,
+            extra_fns=extra_fns,
+            extra_lines=extra_lines,
+        )
+    fn_sources = [get_src(f) for f in [*extra_fns, fn]]
+    resource = _fnk(base_resource, fn_sources, params, fn.__name__, extra_lines)
     object.__setattr__(resource, "fn", fn)
     return resource

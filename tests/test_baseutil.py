@@ -7,9 +7,8 @@ from unittest import TestCase, skipIf
 
 import boto3
 
-import dml_util.baseutil as baseutil
 from dml_util import S3Store
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX
+from dml_util.baseutil import S3_BUCKET, S3_PREFIX, DagRunError, DynamoState
 
 _root_ = Path(__file__).parent.parent
 
@@ -61,8 +60,7 @@ class AwsTestCase(TestCase):
 class TestS3(AwsTestCase):
     def setUp(self):
         super().setUp()
-        self.client = boto3.client("s3")
-        self.client.create_bucket(Bucket=S3_BUCKET)
+        boto3.client("s3", endpoint_url=self.endpoint).create_bucket(Bucket=S3_BUCKET)
 
     def test_js(self):
         s3 = S3Store()
@@ -73,20 +71,19 @@ class TestS3(AwsTestCase):
         js2 = s3.get_js(resp)
         assert js == js2
 
-    def test_writeable(self):
+    def test_ls(self):
         s3 = S3Store()
-
-        txt = "testing"
-
-        def foo(tmpf):
-            with open(tmpf, "w") as f:
-                f.write(txt)
-
-        resp = s3.writeable(foo, suffix=".foo")
-        if not isinstance(resp, str):
-            resp = resp.uri  # Resource = str if no dml
-        r2 = s3.get(resp).decode()
-        assert r2 == txt
+        assert s3.ls(recursive=True) == []
+        keys = ["a", "b/c", "b/d", "b/d/e", "f"]
+        for key in keys:
+            s3.put(b"a", name=key)
+        ls = s3.ls(recursive=False, lazy=True)
+        assert not isinstance(ls, list)
+        assert list(ls) == [s3.name2uri(x) for x in keys if "/" not in x]
+        ls = s3.ls(recursive=True)
+        assert ls == [s3.name2uri(x) for x in keys]
+        [s3.rm(k) for k in keys]
+        assert s3.ls(recursive=True) == []
 
     @skipIf(Dml is None, "Dml not available")
     def test_tar(self):
@@ -130,6 +127,8 @@ class TestS3(AwsTestCase):
                 assert dag.baz.value() == sum(vals)
 
     def tearDown(self):
+        s3 = S3Store()
+        s3.rm(*s3.ls(recursive=True))
         super().tearDown()
 
 
@@ -148,19 +147,19 @@ class TestDynamo(AwsTestCase):
 
     def test_dynamo_db_ops(self):
         data = {"q": "b"}
-        db = baseutil.DynamoState("test-key", tb=self.tb)
+        db = DynamoState("test-key", tb=self.tb)
         info = db.get()
         assert info == {}
         assert db.put(data)
         assert db.get() == data
         assert db.unlock()
-        db2 = baseutil.DynamoState("test-key", tb=self.tb)
+        db2 = DynamoState("test-key", tb=self.tb)
         assert db2.get() == data
 
     def test_dynamo_locking(self):
         timeout = 0.05
-        db0 = baseutil.DynamoState("test-key", timeout=timeout, tb=self.tb)
-        db1 = baseutil.DynamoState("test-key", timeout=timeout, tb=self.tb)
+        db0 = DynamoState("test-key", timeout=timeout, tb=self.tb)
+        db1 = DynamoState("test-key", timeout=timeout, tb=self.tb)
         assert db0.get() == {}
         assert db1.get() is None
         assert db1.put({"asdf": 23}) is False
@@ -174,3 +173,14 @@ class TestDynamo(AwsTestCase):
     def tearDown(self):
         self.client.delete_table(TableName=self.tb)
         super().tearDown()
+
+
+class TestMisc(TestCase):
+    def test_dag_run_error(self):
+        msg = "this is a test"
+        dump = "qwer"
+        try:
+            raise DagRunError(msg, dump=dump)
+        except DagRunError as e:
+            assert str(e) == msg
+            assert e.dump == dump

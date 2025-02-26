@@ -49,6 +49,7 @@ dml-util-script-exec = "dml_util.executor:Script.cli"
 dml-util-docker-exec = "dml_util.executor:Docker.cli"
 dml-util-cfn-exec = "dml_util.executor:Cfn.cli"
 dml-util-dag = "dml_util.dags:main"
+dml-util-config = "dml_util.baseutil:write_config"
 
 [project.urls]
 Documentation = "https://github.com/daggerml/dml-util#readme"
@@ -141,11 +142,14 @@ ban-relative-imports = "all"
 
 [tool.coverage.run]
 source_pkgs = ["dml_util"]
+concurrency = ["multiprocessing", "thread"]
 branch = true
 parallel = true
+sigterm = true
 omit = [
   "src/dml_util/__about__.py",
 ]
+data_file = ".coverage"
 
 [tool.coverage.paths]
 dml_util = ["src/dml_util", "*/dml-util/src/dml_util"]

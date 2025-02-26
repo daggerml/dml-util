@@ -34,5 +34,5 @@ def load():
     zipfile = zip_up(s3, _here_ / "src")
     code_data = dict(zip(["S3Bucket", "S3Key"], s3.parse_uri(zipfile.uri)))
     js["Resources"]["Fn"]["Properties"]["Code"] = code_data
-    params = {"Bucket": S3_BUCKET, "Prefix": S3_PREFIX}
+    params = {"Bucket": S3_BUCKET, "Prefix": "opt/dml/exec/batch"}
     return js, params, "LambdaFunctionArn", "dml-util-lambda-adapter"

@@ -3,12 +3,9 @@ from dml_util import funkify
 
 @funkify
 def query_update(dag):
-    from daggerml import Resource
-
     from dml_util.common import update_query
 
     old_rsrc, params = dag.argv[1:].value()
-    params = {k: v.uri if isinstance(v, Resource) else v for k, v in params.items()}
     dag.result = update_query(old_rsrc, params)
 
 

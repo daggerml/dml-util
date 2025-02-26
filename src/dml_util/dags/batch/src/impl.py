@@ -3,7 +3,7 @@ import logging
 import os
 from textwrap import dedent
 
-from baseutil import S3_BUCKET, S3_PREFIX, DagRunError, LambdaRunner, get_client
+from baseutil import DagRunError, LambdaRunner, get_client
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
@@ -45,18 +45,7 @@ class Batch(LambdaRunner):
                         "name": "DML_OUTPUT_LOC",
                         "value": self.s3.name2uri("output.dump"),
                     },
-                    {
-                        "name": "DML_S3_BUCKET",
-                        "value": S3_BUCKET,
-                    },
-                    {
-                        "name": "DML_S3_PREFIX",
-                        "value": S3_PREFIX,
-                    },
-                    {
-                        "name": "DML_CACHE_KEY",
-                        "value": self.cache_key,
-                    },
+                    *[{"name": k, "value": v} for k, v in self.env.items()],
                 ],
                 "jobRoleArn": os.environ["BATCH_TASK_ROLE_ARN"],
                 **container_props,
@@ -121,9 +110,11 @@ class Batch(LambdaRunner):
                 raise
             if "DEREGISTERED" not in e.response.get("Error", {}).get("Message"):
                 raise
+        self.s3.rm(*self.s3.ls(recursive=True))
 
     def delete(self, state):
-        self.gc(state)
+        if state is not None and len(state) > 0:
+            self.gc(state)
         super().delete(state)
 
 

@@ -2,8 +2,15 @@ import json
 import subprocess
 import sys
 from shutil import which
+from time import sleep
 
-import boto3
+from botocore.exceptions import ClientError
+
+from dml_util.baseutil import get_client
+
+
+def log(*x):
+    print(*x, file=sys.stderr)
 
 
 def local_():
@@ -16,24 +23,29 @@ def local_():
     )
     resp = proc.stdout.strip()
     if proc.returncode != 0:
-        print(resp, file=sys.stderr)
+        log(resp)
         sys.exit(1)
     if resp:
         print(resp)
 
 
 def lambda_():
-    response = boto3.client("lambda").invoke(
-        FunctionName=sys.argv[1],
-        InvocationType="RequestResponse",
-        LogType="Tail",
-        Payload=sys.stdin.read().strip().encode(),
-    )
+    try:
+        response = get_client("lambda").invoke(
+            FunctionName=sys.argv[1],
+            InvocationType="RequestResponse",
+            LogType="Tail",
+            Payload=sys.stdin.read().strip().encode(),
+        )
+    except ClientError as e:
+        log(str(e))
+        sleep(0.1)
+        return
     payload = json.loads(response["Payload"].read())
     if payload.get("message") is not None:
-        print(payload["message"], file=sys.stderr)
+        log(payload["message"])
     if "status" not in payload:  # something went wrong with the lambda
-        print(payload, file=sys.stderr)
+        log(payload)
         sys.exit(1)
     if payload["status"] // 100 in [4, 5]:
         sys.exit(payload["status"])

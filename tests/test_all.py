@@ -11,6 +11,9 @@ _root_ = Path(__file__).parent.parent
 
 
 class TestBasic(TestCase):
+    def setUp(self):
+        os.environ["COVERAGE_PROCESS_START"] = os.path.join(os.getcwd(), ".coveragerc")
+
     def test_funkify(self):
         def fn(*args):
             return sum(args)
@@ -38,7 +41,7 @@ class TestBasic(TestCase):
             (fnid,) = os.listdir(cache_dir)
             self.assertCountEqual(
                 os.listdir(f"{cache_dir}/{fnid}/"),
-                ["stdout", "stderr", "input.dump", "output.dump", "script"],
+                ["stdout", "stderr", "input.dump", "script"],
             )
 
     def test_funkify_errors(self):

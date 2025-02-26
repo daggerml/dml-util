@@ -23,8 +23,50 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 5  # seconds
-S3_BUCKET = os.environ["DML_S3_BUCKET"]
-S3_PREFIX = os.getenv("DML_S3_PREFIX", "jobs").rstrip("/")
+
+
+# Static defaults
+_CONFIG_ITEMS = ["s3_bucket", "s3_prefix", "write_loc"]
+CONFIG_PATH = ".dml/util-config.json"
+
+
+def load_config():
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            config = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        config = {}
+    config = {k: os.getenv(f"DML_{k.upper()}", config.get(k)) for k in _CONFIG_ITEMS}
+    config = {k: v for k, v in config.items() if v is not None}
+    return config
+
+
+def write_config():
+    import argparse
+
+    parser = argparse.ArgumentParser(epilog='Example: prog key1=value1 "key2=value=with=equals"')
+    parser.add_argument(
+        "kvs",
+        nargs="+",
+        type=str,
+        help="Key-value pairs in the format key=value",
+    )
+    args = parser.parse_args()
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            config = json.load(f)
+    else:
+        config = {}
+    for kv in args.kvs:
+        k, v = kv.split("=", 1)
+        config[k] = v
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f)
+
+
+CONFIG = load_config()
+S3_BUCKET = CONFIG["s3_bucket"]
+S3_PREFIX = CONFIG["s3_prefix"]
 
 
 def now():
@@ -33,14 +75,22 @@ def now():
 
 def get_client(name):
     logger.info("getting %r client", name)
-    config = Config(connect_timeout=5, retries={"max_attempts": 0})
+    config = Config(connect_timeout=5, retries={"max_attempts": 5, "mode": "adaptive"})
     return boto3.client(name, config=config)
 
 
 class DagRunError(Exception):
-    def __init__(self, message, state=None):
+    def __init__(self, message, dump=None):
         super().__init__(message)
-        self.state = state
+        self.dump = dump
+
+    @classmethod
+    def from_ex(cls, e, dump=None):
+        if isinstance(e, DagRunError):
+            e.dump = dump or e.dump
+            return e
+        msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
+        return cls(msg, dump=dump)
 
 
 def js_dump(data, **kw):
@@ -77,7 +127,7 @@ class S3Store:
 
     @staticmethod
     def get_write_prefix():
-        cache_key = os["DML_CACHE_KEY"]
+        cache_key = os.environ["DML_CACHE_KEY"]
         return f"{S3_PREFIX}/runs/{cache_key}"
 
     def parse_uri(self, name_or_uri):
@@ -89,6 +139,24 @@ class S3Store:
     def name2uri(self, name):
         bkt, key = self.parse_uri(name)
         return f"s3://{bkt}/{key}"
+
+    def _ls(self, recursive=False):
+        kw = {}
+        if not recursive:
+            kw["Delimiter"] = "/"
+        prefix = self.prefix.rstrip("/") + "/"
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix, **kw):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                uri = f"s3://{self.bucket}/{key}"
+                yield uri
+
+    def ls(self, recursive=False, lazy=False):
+        resp = self._ls(recursive=recursive)
+        if not lazy:
+            resp = list(resp)
+        return resp
 
     def exists(self, name_or_uri):
         bucket, key = self.parse_uri(name_or_uri)
@@ -125,13 +193,6 @@ class S3Store:
     def get_js(self, uri):
         return json.loads(self.get(uri).decode())
 
-    def writeable(self, fn, suffix=""):
-        with NamedTemporaryFile(suffix=suffix) as tmpf:
-            fn(tmpf.name)
-            tmpf.flush()
-            tmpf.seek(0)
-            return self.put(filepath=tmpf.name, suffix=suffix)
-
     def tar(self, dml, path, excludes=()):
         exclude_flags = [["--exclude", x] for x in excludes]
         exclude_flags = [y for x in exclude_flags for y in x]
@@ -150,6 +211,15 @@ class S3Store:
         with NamedTemporaryFile(suffix=".tar") as tmpf:
             boto3.client("s3").download_file(p.netloc, p.path[1:], tmpf.name)
             subprocess.run(["tar", "-xvf", tmpf.name, "-C", dest], check=True)
+
+    def rm(self, *name_or_uris):
+        if len(name_or_uris) == 0:
+            return
+        buckets, keys = zip(*[self.parse_uri(x) for x in name_or_uris])
+        self.client.delete_objects(
+            Bucket=buckets[0],
+            Delete={"Objects": [{"Key": x} for x in keys]},
+        )
 
 
 class State:
@@ -294,13 +364,23 @@ class Runner:
     cache_key: str
     kwargs: "any"
     dump: str
-    retry: bool
-    on_error: str = "del"
+    retry: bool  # TODO: executor caching
     state: State = field(init=False)
     state_class = DynamoState
 
     def __post_init__(self):
+        meta_kwargs = (self.kwargs or {}).pop("dml_meta", {})
+        bucket = meta_kwargs.pop("s3_bucket", S3_BUCKET)
+        prefix = meta_kwargs.pop("s3_prefix", S3_PREFIX)
+        clsname = type(self).__name__
         self.state = self.state_class(self.cache_key)
+        self.prefix = f"{prefix}/exec/{clsname.lower()}"
+        self.env = {
+            "DML_S3_BUCKET": bucket,
+            "DML_S3_PREFIX": prefix,
+            "DML_CACHE_KEY": self.cache_key,
+            "DML_WRITE_LOC": f"s3://{bucket}/{self.prefix}/data/{self.cache_key}",
+        }
 
     def _fmt(self, msg):
         return f"{self.__class__.__name__} [{self.cache_key}] :: {msg}"
@@ -312,22 +392,18 @@ class Runner:
         try:
             logger.info("getting info from %r", self.state_class.__name__)
             state, msg, dump = self.update(state)
-            if dump and self.retry and not is_retry:
+            if dump is not None:
                 self.delete(state)
-                state, msg, dump = self.update({})
-            if state is None:
                 self.state.delete()
             else:
                 self.state.put(state)
             return dump, self._fmt(msg)
         except Exception as e:
-            inst = isinstance(e, DagRunError)
-            if (inst and e.state is None) or ((self.on_error == "del") and not inst):
-                self.state.delete()
-            elif inst:
-                self.state.put(e.state)
-            msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
-            raise DagRunError(self._fmt(msg)) from e
+            self.state.delete()
+            self.delete(state)
+            if isinstance(e, DagRunError) and e.dump is not None:
+                return e.dump, str(msg)
+            raise DagRunError.from_ex(e) from None
         finally:
             self.state.unlock()
 
@@ -340,7 +416,11 @@ class LambdaRunner(Runner):
 
     def __post_init__(self):
         super().__post_init__()
-        self.s3 = S3Store(prefix=f"{S3_PREFIX}/jobs/{self.cache_key}")
+        self.s3 = S3Store(prefix=f"{self.prefix}/jobs/{self.cache_key}")
+
+    @property
+    def output_loc(self):
+        return self.s3.name2uri("output.dump")
 
     @classmethod
     def handler(cls, event, context):
@@ -349,9 +429,9 @@ class LambdaRunner(Runner):
             status = 201 if dump is None else 200
             return {"status": status, "dump": dump, "message": msg}
         except DagRunError as e:
-            return {"status": 400, "dump": None, "message": e.message}
+            return {"status": 400, "dump": e.dump, "message": str(e)}
 
     def delete(self, state):
-        if self.s3.exists("output.dump"):
-            bucket, key = self.s3.parse_uri("output.dump")
+        if self.s3.exists(self.output_loc):
+            bucket, key = self.s3.parse_uri(self.output_loc)
             self.s3.client.delete_object(Bucket=bucket, Key=key)

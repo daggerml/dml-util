@@ -8,9 +8,13 @@ from dataclasses import dataclass
 
 import boto3
 from botocore.exceptions import ClientError
-from daggerml import Dml
 
 from dml_util.baseutil import DagRunError, LocalState, Runner
+
+try:
+    from daggerml import Dml
+except ImportError:
+    Dml = None
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,10 @@ class LocalRunner(Runner):
         if dump is not None:
             print(dump)
 
+    def delete(self, state):
+        if os.path.exists(f"{self.cache_dir}/output.dump"):
+            os.unlink(f"{self.cache_dir}/output.dump")
+
 
 class Script(LocalRunner):
     def submit(self):
@@ -48,7 +56,7 @@ class Script(LocalRunner):
             {
                 "DML_INPUT_LOC": f"{self.cache_dir}/input.dump",
                 "DML_OUTPUT_LOC": f"{self.cache_dir}/output.dump",
-                "DML_CACHE_KEY": self.cache_key,
+                **self.env,
             }
         )
         proc = subprocess.Popen(
@@ -87,10 +95,6 @@ class Script(LocalRunner):
                 msg = f"{msg}\nSTDERR:\n-------\n{f.read()}"
         raise RuntimeError(msg)
 
-    def delete(self, state):
-        if os.path.exists(f"{self.cache_dir}/output.dump"):
-            os.unlink(f"{self.cache_dir}/output.dump")
-
 
 class Docker(LocalRunner):
     def _run_command(self, command):
@@ -106,6 +110,8 @@ class Docker(LocalRunner):
         subprocess.run(["chmod", "+x", f"{self.cache_dir}/script"], check=True)
         with open(f"{self.cache_dir}/input.dump", "w") as f:
             f.write(self.dump)
+        env_flags = [("-e", f"{k}={v!r}") for k, v in self.env.items()]
+        env_flags = [y for x in env_flags for y in x]
         exit_code, container_id = self._run_command(
             [
                 "docker",
@@ -116,8 +122,7 @@ class Docker(LocalRunner):
                 "DML_INPUT_LOC=/opt/dml/input.dump",
                 "-e",
                 "DML_OUTPUT_LOC=/opt/dml/output.dump",
-                "-e",
-                f"DML_CACHE_KEY={self.cache_key!r}",
+                *env_flags,
                 "-d",  # detached
                 *self.kwargs.get("flags", []),
                 self.kwargs["image"],
@@ -161,10 +166,6 @@ class Docker(LocalRunner):
             msg = f"container {container_id} finished with status {container_status!r}"
             return None, msg, self.maybe_complete(container_id, container_status)
 
-    def delete(self, state):
-        if os.path.exists(f"{self.cache_dir}/output.dump"):
-            os.unlink(f"{self.cache_dir}/output.dump")
-
 
 class Cfn(LocalRunner):
     def fmt(self, stack_id, status, raw_status):
@@ -204,6 +205,7 @@ class Cfn(LocalRunner):
         return state, self.fmt(state["StackId"], status, raw_status)
 
     def submit(self, client):
+        assert Dml is not None, "dml is not installed..."
         with Dml(data=self.dump) as dml:
             with dml.new(f"fn:{self.cache_key}", f"execution of: {self.cache_key}") as dag:
                 name, js, params = dag.argv[1:4].value()
@@ -225,6 +227,7 @@ class Cfn(LocalRunner):
         return state, msg
 
     def update(self, state, is_retry=False):
+        assert Dml is not None, "dml is not installed..."
         client = boto3.client("cloudformation")
         result = None
         if state == {}:
@@ -258,17 +261,25 @@ def aws_fndag():
     from urllib.parse import urlparse
 
     import boto3
-    from daggerml import Dml
 
-    INPUT_LOC = os.environ["DML_INPUT_LOC"]
-    OUTPUT_LOC = os.environ["DML_OUTPUT_LOC"]
+    assert Dml is not None, "dml is not installed..."
 
-    def handler(dump):
-        p = urlparse(OUTPUT_LOC)
-        boto3.client("s3").put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
+    def _get_data():
+        indata = os.environ["DML_INPUT_LOC"]
+        p = urlparse(indata)
+        if p.scheme == "s3":
+            return boto3.client("s3").get_object(Bucket=p.netloc, Key=p.path[1:])["Body"].read().decode()
+        with open(indata) as f:
+            return f.read()
 
-    p = urlparse(INPUT_LOC)
-    data = boto3.client("s3").get_object(Bucket=p.netloc, Key=p.path[1:])["Body"].read().decode()
-    with Dml(data=data, message_handler=handler) as dml:
+    def _handler(dump):
+        outdata = os.environ["DML_OUTPUT_LOC"]
+        p = urlparse(outdata)
+        if p.scheme == "s3":
+            return boto3.client("s3").put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
+        with open(outdata, "w") as f:
+            f.write(dump)
+
+    with Dml(data=_get_data(), message_handler=_handler) as dml:
         with dml.new("test", "test") as dag:
             yield dag
