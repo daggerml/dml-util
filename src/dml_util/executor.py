@@ -53,7 +53,7 @@ class LocalRunner(Runner):
 
 class Script(LocalRunner):
     def submit(self):
-        tmpd = self._run("mktemp -d -t dml.".split())
+        tmpd = self._run("mktemp -d -t dml.XXXXXX".split())
         with open(f"{tmpd}/script", "w") as f:
             f.write(self.kwargs["script"])
         subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
@@ -127,7 +127,7 @@ class Ssh(LocalRunner):
     def submit(self):
         xtbl = self.kwargs["executable"]
         path_dir = self.kwargs["path_dir"]
-        tmpd = self._run("mktemp -d -t dml.")
+        tmpd = self._run("mktemp -d -t dml.XXXXXX")
         self._run(f"cat > {tmpd}/script", input=self.kwargs["script"])
         self._run(f"chmod +x {tmpd}/script")
         self._run(f"cat > {tmpd}/input.dump", input=self.dump)
@@ -184,7 +184,7 @@ class Docker(LocalRunner):
             return 1, str(e)
 
     def submit(self):
-        tmpd = self._run("mktemp -d -t dml.".split())
+        tmpd = self._run("mktemp -d -t dml.XXXXXX".split())
         with open(f"{tmpd}/script", "w") as f:
             f.write(self.kwargs["script"])
         subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
