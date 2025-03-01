@@ -8,7 +8,7 @@ from unittest import TestCase, skipIf
 import boto3
 
 from dml_util import S3Store
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX, DagRunError, DynamoState
+from dml_util.baseutil import S3_BUCKET, S3_PREFIX, DynamoState, WithDataError
 
 _root_ = Path(__file__).parent.parent
 
@@ -180,7 +180,7 @@ class TestMisc(TestCase):
         msg = "this is a test"
         dump = "qwer"
         try:
-            raise DagRunError(msg, dump=dump)
-        except DagRunError as e:
+            raise WithDataError(msg, dump=dump)
+        except WithDataError as e:
             assert str(e) == msg
             assert e.dump == dump

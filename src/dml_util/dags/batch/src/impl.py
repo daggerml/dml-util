@@ -3,7 +3,7 @@ import logging
 import os
 from textwrap import dedent
 
-from baseutil import DagRunError, LambdaRunner, get_client
+from baseutil import DagExecError, LambdaRunner, get_client
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
@@ -62,17 +62,6 @@ class Batch(LambdaRunner):
         job_id = response["jobId"]
         return {"job_def": job_def, "job_id": job_id}
 
-    def finish(self, state, msg):
-        job_id = "???"
-        if state:
-            self.gc(state)
-            job_id = state["job_id"]
-        if not self.s3.exists("output.dump"):
-            raise DagRunError(f"{job_id = } {msg} : no output", None)
-        dump = self.s3.get("output.dump")
-        msg = f"{job_id = } {msg}."
-        return None, msg, dump
-
     def describe_job(self, state):
         job_id = state["job_id"]
         response = self.client.describe_jobs(jobs=[job_id])
@@ -88,16 +77,19 @@ class Batch(LambdaRunner):
             state = self.submit()
             job_id = state["job_id"]
             return state, f"{job_id = } submitted", None
+        dump = None
         job_id, status = self.describe_job(state)
         if status in [SUCCESS_STATE, FAILED_STATE, None]:
-            return self.finish(state, f"finished with status {status}")
+            if not self.s3.exists("output.dump"):
+                raise DagExecError(f"{job_id = } : no output")
+            dump = self.s3.get("output.dump")
         msg = f"{job_id = } {status}"
-        return state, msg, None
+        return state, msg, dump
 
     def gc(self, state):
         job_id, status = self.describe_job(state)
         try:
-            self.client.cancel_job(jobId=job_id, reason="cancellation")
+            self.client.cancel_job(jobId=job_id, reason="gc")
         except ClientError:
             pass
         job_def = state["job_def"]

@@ -48,6 +48,7 @@ dml-util-local-adapter = "dml_util.adapter:local_"
 dml-util-script-exec = "dml_util.executor:Script.cli"
 dml-util-docker-exec = "dml_util.executor:Docker.cli"
 dml-util-cfn-exec = "dml_util.executor:Cfn.cli"
+dml-util-ssh-exec = "dml_util.executor:Ssh.cli"
 dml-util-dag = "dml_util.dags:main"
 dml-util-config = "dml_util.baseutil:write_config"
 

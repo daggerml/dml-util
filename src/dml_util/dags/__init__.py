@@ -9,8 +9,9 @@ from time import time
 
 from daggerml import Dml, Resource
 
+from dml_util.executor import CFN_EXEC
+
 _here_ = Path(__file__).parent
-CFN_EXEC = Resource("dml-util-cfn-exec", adapter="dml-util-local-adapter")
 
 
 def imp(name):

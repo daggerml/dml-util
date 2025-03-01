@@ -52,7 +52,11 @@ def write_config():
         help="Key-value pairs in the format key=value",
     )
     args = parser.parse_args()
-    config = load_config()
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            config = json.load(f)
+    else:
+        config = {}
     for kv in args.kvs:
         k, v = kv.split("=", 1)
         config[k] = v
@@ -75,14 +79,23 @@ def get_client(name):
     return boto3.client(name, config=config)
 
 
-class DagRunError(Exception):
+class DagExecError(Exception):
+    @classmethod
+    def from_ex(cls, e):
+        if isinstance(e, DagExecError):
+            return e
+        msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
+        return cls(msg)
+
+
+class WithDataError(Exception):
     def __init__(self, message, dump=None):
         super().__init__(message)
         self.dump = dump
 
     @classmethod
     def from_ex(cls, e, dump=None):
-        if isinstance(e, DagRunError):
+        if isinstance(e, WithDataError):
             e.dump = dump or e.dump
             return e
         msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
@@ -365,9 +378,9 @@ class Runner:
     state_class = DynamoState
 
     def __post_init__(self):
-        meta_kwargs = (self.kwargs or {}).pop("dml_meta", {})
-        bucket = meta_kwargs.pop("s3_bucket", S3_BUCKET)
-        prefix = meta_kwargs.pop("s3_prefix", S3_PREFIX)
+        meta_kwargs = (self.kwargs or {}).get("dml_meta", {})
+        bucket = meta_kwargs.get("s3_bucket", S3_BUCKET)
+        prefix = meta_kwargs.get("s3_prefix", S3_PREFIX)
         clsname = type(self).__name__
         self.state = self.state_class(self.cache_key)
         self.prefix = f"{prefix}/exec/{clsname.lower()}"
@@ -381,25 +394,28 @@ class Runner:
     def _fmt(self, msg):
         return f"{self.__class__.__name__} [{self.cache_key}] :: {msg}"
 
-    def run(self, is_retry=False):
+    def put_state(self, state, delete=False):
+        if delete:
+            self.delete(state)
+            self.state.delete()
+        else:
+            self.state.put(state)
+
+    def run(self):
         state = self.state.get()
         if state is None:
             return None, self._fmt("Could not acquire job lock")
         try:
             logger.info("getting info from %r", self.state_class.__name__)
             state, msg, dump = self.update(state)
-            if dump is not None:
-                self.delete(state)
-                self.state.delete()
-            else:
-                self.state.put(state)
+            self.put_state(state, dump is not None)
             return dump, self._fmt(msg)
         except Exception as e:
-            self.state.delete()
-            self.delete(state)
-            if isinstance(e, DagRunError) and e.dump is not None:
-                return e.dump, str(msg)
-            raise DagRunError.from_ex(e) from None
+            if isinstance(e, (WithDataError, DagExecError)):
+                self.put_state(state, True)
+            if isinstance(e, WithDataError):
+                return e.dump, str(e)
+            raise DagExecError.from_ex(e) from None
         finally:
             self.state.unlock()
 
@@ -424,8 +440,8 @@ class LambdaRunner(Runner):
             dump, msg = cls(**event).run()
             status = 201 if dump is None else 200
             return {"status": status, "dump": dump, "message": msg}
-        except DagRunError as e:
-            return {"status": 400, "dump": e.dump, "message": str(e)}
+        except DagExecError as e:
+            return {"status": 400, "dump": None, "message": str(e)}
 
     def delete(self, state):
         if self.s3.exists(self.output_loc):

@@ -5,8 +5,7 @@ from textwrap import dedent
 
 from daggerml import Resource
 
-SCRIPT_EXEC = Resource("dml-util-script-exec", adapter="dml-util-local-adapter")
-DOCKER_EXEC = Resource("dml-util-docker-exec", adapter="dml-util-local-adapter")
+from dml_util.executor import SCRIPT_EXEC
 
 
 def update_query(resource, new_params):
