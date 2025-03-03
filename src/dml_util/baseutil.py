@@ -391,10 +391,9 @@ class Runner:
         return f"{self.__class__.__name__} [{self.cache_key}] :: {msg}"
 
     def put_state(self, state, delete=False):
-        if delete:
-            if not os.getenv("DML_KEEP_STATE"):
-                self.delete(state)
-                self.state.delete()
+        if delete and not os.getenv("DML_KEEP_STATE"):
+            self.delete(state)
+            self.state.delete()
         else:
             self.state.put(state)
 

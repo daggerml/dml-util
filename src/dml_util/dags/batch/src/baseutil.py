@@ -330,21 +330,17 @@ class DynamoState(State):
 @dataclass
 class LocalState(State):
     cache_key: str
-    cache_dir: str = field(init=False)
     state_file: str = field(init=False)
 
     def __post_init__(self):
-        if "DML_FN_CACHE_LOC" in os.environ:
-            self.cache_dir = os.environ["DML_FN_CACHE_LOC"]
-        elif "DML_FN_CACHE_DIR" in os.environ:
-            config_dir = os.environ["DML_FN_CACHE_DIR"]
-            self.cache_dir = f"{config_dir}/cache/dml-util/{self.cache_key}"
+        if "DML_FN_CACHE_DIR" in os.environ:
+            cache_dir = os.environ["DML_FN_CACHE_DIR"]
         else:
             status = subprocess.run(["dml", "status"], check=True, capture_output=True)
             config_dir = json.loads(status.stdout.decode())["config_dir"]
-            self.cache_dir = f"{config_dir}/cache/dml-util/{self.cache_key}"
-        os.makedirs(self.cache_dir, exist_ok=True)
-        self.state_file = Path(self.cache_dir) / "status"
+            cache_dir = f"{config_dir}/cache/dml-util"
+        os.makedirs(cache_dir, exist_ok=True)
+        self.state_file = Path(cache_dir) / f"{self.cache_key}.json"
 
     def put(self, state):
         status_data = {
@@ -395,7 +391,7 @@ class Runner:
         return f"{self.__class__.__name__} [{self.cache_key}] :: {msg}"
 
     def put_state(self, state, delete=False):
-        if delete:
+        if delete and not os.getenv("DML_KEEP_STATE"):
             self.delete(state)
             self.state.delete()
         else:
