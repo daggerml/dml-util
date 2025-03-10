@@ -13,9 +13,9 @@ from textwrap import dedent
 from unittest import TestCase, mock
 
 from daggerml import Dml
-from daggerml.core import Error, Node
+from daggerml.core import Error
 
-from dml_util import DOCKER_EXEC, SSH_EXEC, funkify
+from dml_util import SSH_EXEC, funkify
 
 _root_ = Path(__file__).parent.parent
 
@@ -59,23 +59,6 @@ class TestBasic(TestCase):
                     d0.f0 = dag_fn
                     with self.assertRaises(Error):
                         d0.n0 = d0.f0(1, 2, 3)
-
-    def test_monkey_patch(self):
-        @funkify
-        def dag_fn(dag):
-            dag.result = sum(dag.argv[1:].value())
-            return dag.result
-
-        vals = [1, 2, 3]
-        with TemporaryDirectory() as fn_cache_dir:
-            with mock.patch.dict(os.environ, DML_FN_CACHE_DIR=fn_cache_dir):
-                with Dml() as dml:
-                    d0 = dml.new("d0", "d0")
-                    val = d0(DOCKER_EXEC)
-                    assert isinstance(val, Node)
-                    assert val.value() == DOCKER_EXEC
-                    d0.n0 = d0(dag_fn)(*vals)
-                    assert d0.n0.value() == sum(vals)
 
 
 class TestSSH(unittest.TestCase):

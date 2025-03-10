@@ -32,8 +32,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dml = [
-  "daggerml==0.0.30",
-  "daggerml-cli==0.0.20",
+  "daggerml==0.0.31",
+  "daggerml-cli==0.0.21",
 ]
 docker = ["docker==7.1.0"]
 test = [
@@ -119,6 +119,11 @@ AWS_SECRET_ACCESS_KEY  = "doesnotexist"
 DML_S3_BUCKET = "dml-doesnotexist"
 DML_S3_PREFIX = "jobs"
 
+[tool.hatch.envs.df]
+dependencies = [
+  "polars==1.24",
+]
+features = ["dml"]
 
 [tool.ruff]
 target-version = "py39"

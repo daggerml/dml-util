@@ -18,8 +18,12 @@ from botocore.exceptions import ClientError
 
 try:
     from daggerml import Resource
+    from daggerml.core import Node
+
+    has_dml = True
 except ImportError:
-    Resource = str
+    Resource = Node = str
+    has_dml = False
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 5  # seconds
@@ -140,6 +144,10 @@ class S3Store:
         return f"{S3_PREFIX}/runs/{cache_key}"
 
     def parse_uri(self, name_or_uri):
+        if not isinstance(name_or_uri, str):
+            if isinstance(name_or_uri, Node):
+                name_or_uri = name_or_uri.value()
+            name_or_uri = name_or_uri.uri
         p = urlparse(name_or_uri)
         if p.scheme == "s3":
             return p.netloc, p.path[1:]

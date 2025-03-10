@@ -1,5 +1,4 @@
 try:
-    import dml_util.monkey_patch
     from dml_util.common import funkify
     from dml_util.executor import CFN_EXEC, DOCKER_EXEC, SCRIPT_EXEC, SSH_EXEC
     from dml_util.funk import dkr_build, dkr_push, query_update
