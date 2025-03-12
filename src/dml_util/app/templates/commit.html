@@ -1,0 +1,46 @@
+{% extends "layout.html" %} {% block title %}Commit {{ commit_name }} - Notebook
+Viewer{% endblock %} {% block content %}
+<h1>Commit: {{ commit_name }}</h1>
+
+<h3>Bash Command Output</h3>
+<pre>{{ bash_output }}</pre>
+
+<div class="mb-3">
+  <label for="fooSelect" class="form-label">Select Notebook File (Foo):</label>
+  <select id="fooSelect" class="form-select" onchange="onFooChange(this.value)">
+    {% for file in files %}
+    <option
+      value="{{ file }}"
+      {%
+      if
+      file=""
+      ="selected_file"
+      %}selected{%
+      endif
+      %}
+    >
+      {{ file }}
+    </option>
+    {% endfor %}
+  </select>
+</div>
+
+{% if selected_file %}
+<h3>Viewing: {{ selected_file }}</h3>
+<!-- Embed the notebook output in an iframe with sandbox to isolate its CSS/JS -->
+<iframe
+  src="{{ url_for('serve_file', commit_name=commit_name, filename=selected_file) }}"
+  style="width: 100%; height: 800px; border: none"
+  sandbox="allow-same-origin allow-scripts allow-popups"
+>
+</iframe>
+{% endif %} {% endblock %} {% block extra_js %}
+<script>
+  function onFooChange(filename) {
+    // Reload the page with the new 'foo' query parameter
+    const url = new URL(window.location.href);
+    url.searchParams.set("foo", filename);
+    window.location.href = url.toString();
+  }
+</script>
+{% endblock %}

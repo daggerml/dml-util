@@ -1,0 +1,336 @@
+{% extends "layout.html" %} {% block title %}DAG{% endblock %} {% block content
+%}
+<visa-vis data-json="{{ data }}"></visa-vis>
+
+<script>
+  class DagVis extends HTMLElement {
+    constructor() {
+      super();
+      // Attach an open shadow root for style and script isolation.
+      this.attachShadow({ mode: "open" });
+    }
+
+    connectedCallback() {
+      const shadow = this.shadowRoot;
+
+      // Create a container element with our component's markup and styles.
+      const container = document.createElement("div");
+      container.classList.add("container");
+      container.innerHTML = `
+          <style>
+            :host {
+              display: block;
+            }
+            .container {
+              margin: 0;
+              font-family: Arial, sans-serif;
+              height: calc(100vh - 80px);
+              display: grid;
+              grid-template-columns: 1fr;
+              grid-template-rows: 1fr 300px;
+              grid-template-areas: "graph" "table";
+            }
+            #cy {
+              width: 100%;
+              height: 100%;
+              text-color: var(--text-color);
+              position: relative;
+              grid-area: graph;
+              background-size: 40px 40px;
+              background-image: linear-gradient(to right, var(--border-color) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--border-color) 1px, transparent 1px);
+            }
+            .tooltip {
+              position: absolute;
+              padding: 5px 10px;
+              border-radius: 3px;
+              font-size: 12px;
+              pointer-events: none;
+              display: none;
+              max-width: 300px;
+              white-space: pre-line;
+              overflow: hidden;
+              text-overflow: ellipsis;
+            }
+            .legend {
+              position: absolute;
+              bottom: 20px;
+              right: 20px;
+              background-color: var(--background-color);
+              padding: 15px;
+              border-radius: 5px;
+              border: 1px solid var(--border-color);
+              box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+            .legend-item {
+              display: flex;
+              align-items: center;
+              margin-bottom: 8px;
+            }
+            .legend-color {
+              width: 20px;
+              height: 20px;
+              margin-right: 10px;
+              border: 2px solid;
+            }
+            .legend-shape {
+              width: 20px;
+              height: 20px;
+              margin-right: 10px;
+              background-color: var(--navbar-text);  /* #444; */
+            }
+            .table-container {
+              max-height: 300px;
+              overflow-y: auto;
+              grid-area: table;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+            }
+            td { font-family: monospace; }
+            th, td {
+              padding: 12px;
+              text-align: left;
+              border-bottom: 1px solid #ddd;
+            }
+            th {
+              position: sticky;
+              top: 0;
+            }
+            tr:hover { background-color: #f9f9f9; }
+            /* Table row highlighting */
+            tr.highlight {
+              background-color: #ffff99;  /* light yellow */
+              transition: background-color 0.2s ease;
+            }
+            /* Cytoscape node highlighting */
+            .highlight {
+              /* When applied to a Cytoscape node via node.addClass('highlight') will override default node styles */
+              border-width: 30px;
+              border-color: #ff9800;
+              background-color: #ffeb3b;
+              transition: background-color 0.2s ease, border-color 0.2s ease;
+            }
+          </style>
+          <div id="cy">
+            <div class="legend">
+              <h3 style="margin-top: 0">Color</h3>
+              <div class="legend-item">
+                <div class="legend-color" style="border-color: yellowgreen; background-color: yellowgreen"></div>
+                <span>Literal</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color" style="border-color: tomato; background-color: tomato"></div>
+                <span>Function</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color" style="border-color: orange; background-color: orange"></div>
+                <span>Import</span>
+              </div>
+              <h3>Shape</h3>
+              <div class="legend-item">
+                <div class="legend-shape" style="border-radius: 3px"></div>
+                <span>Internal</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-shape" style="border-radius: 50%"></div>
+                <span>Result</span>
+              </div>
+            </div>
+          </div>
+          <div class="tooltip"></div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Value</th>
+                  <th>Result?</th>
+                  <th>Docstring</th>
+                </tr>
+              </thead>
+              <tbody id="nodeTable"></tbody>
+            </table>
+          </div>
+        `;
+      shadow.appendChild(container);
+
+      this.loadScript("https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js")
+        .then(() => this.loadScript("https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.js"))
+        .then(() => this.loadScript("https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"))
+        .then(() => {
+          // Once libraries are loaded, initialize Cytoscape visualization.
+          this.initCytoscape();
+        })
+        .catch((error) => {
+          console.error("Error loading scripts:", error);
+        });
+    }
+
+    loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () =>
+          reject(new Error(`Failed to load script: ${src}`));
+        this.shadowRoot.appendChild(script);
+      });
+    }
+
+    initCytoscape() {
+      let graphData = {};
+      try {
+        graphData = JSON.parse(this.getAttribute("data-json"));
+      } catch (e) {
+        console.error("Invalid JSON data for dag-vis", e);
+      }
+
+      const color_map = {
+        literal: "yellowgreen",
+        fn: "tomato",
+        import: "orange",
+      };
+
+      const cyNodes = graphData.nodes.map((node) => ({
+        data: {
+          id: node.id,
+          label: node.name ? node.name : "#" + node.id.substring(0, 8),
+          shape: node.id === graphData.result ? "ellipse" : "roundrectangle",
+          color: color_map[node.type],
+          hover: [
+            `id:    ${node.id}`,
+            `value: ${node.value}`,
+            ...(node.doc ? [`doc:   ${node.doc}`] : []),
+          ].join("\n"),
+          doc: node.doc,
+        },
+      }));
+      const cyEdges = graphData.edges
+        .filter((x) => x.type === "node")
+        .map((edge) => ({
+          data: {
+            source: edge.source,
+            target: edge.target,
+          },
+        }));
+
+      const cyContainer = this.shadowRoot.querySelector("#cy");
+      const cy = cytoscape({
+        container: cyContainer,
+        elements: {
+          nodes: cyNodes,
+          edges: cyEdges,
+        },
+        style: [
+          {
+            selector: "node",
+            style: {
+              label: "data(label)",
+              "background-color": "data(color)",
+              "border-width": 1,
+              "border-color": "#000",
+              color: "#000",
+              "text-valign": "center",
+              "text-halign": "center",
+              width: 80,
+              height: 30,
+              "font-size": 12,
+              padding: 5,
+              shape: "data(shape)",
+            },
+          },
+          {
+            selector: "edge",
+            style: {
+              width: 1,
+              "line-color": "#000",
+              "target-arrow-color": "#000",
+              "target-arrow-shape": "triangle",
+              "source-arrow-color": "#000",
+              "curve-style": "bezier",
+            },
+          },
+        ],
+        layout: {
+          name: "dagre",
+          rankDir: "TB",
+          nodeSep: 50,
+          rankSep: 100,
+          padding: 50,
+        },
+      });
+
+      const tooltip = this.shadowRoot.querySelector(".tooltip");
+      cy.on("mouseover", "node", function (e) {
+        const node = e.target;
+        tooltip.style.display = "block";
+        tooltip.style.fontFamily = "monospace";
+        tooltip.style.whiteSpace = "pre";
+        tooltip.style.left = e.renderedPosition.x + "px";
+        tooltip.style.top = e.renderedPosition.y + 20 + "px";
+        tooltip.textContent = node.data("hover");
+        const row = shadow.querySelector(`tr[data-node-id="${node.id()}"]`);
+        if (row) {
+          row.classList.add("highlight");
+        }
+        node.addClass("highlight");
+      });
+      cy.on("mouseout", "node", function () {
+        tooltip.style.display = "none";
+        const row = shadow.querySelector(`tr[data-node-id="${node.id()}"]`);
+        if (row) {
+          row.classList.remove("highlight");
+        }
+        node.removeClass("highlight");
+      });
+      cy.on("mousemove", "node", function (e) {
+        tooltip.style.left = e.renderedPosition.x + 5 + "px";
+        tooltip.style.top = e.renderedPosition.y + 20 + "px";
+      });
+
+      const nodeTable = this.shadowRoot.querySelector("#nodeTable");
+      graphData.nodes
+        .sort((a, b) => ((a.name || "") > (b.name || "") ? 1 : -1))
+        .forEach((node) => {
+          const row = document.createElement("tr");
+          row.setAttribute("data-node-id", node.id);
+          row.innerHTML = `
+              <td>${node.id}</td>
+              <td>${node.name || ""}</td>
+              <td>${node.type}</td>
+              <td>${node.value}</td>
+              <td>${node.id === graphData.result}</td>
+              <td>${node.doc || ""}</td>
+            `;
+          nodeTable.appendChild(row);
+        });
+      // Assume 'cy' is your Cytoscape instance and 'shadow' is your shadowRoot.
+      const rows = this.shadowRoot.querySelectorAll("tr[data-node-id]");
+      rows.forEach((row) => {
+        row.addEventListener("mouseover", () => {
+          const nodeId = row.getAttribute("data-node-id");
+          const cyNode = cy.getElementById(nodeId);
+          if (cyNode) {
+            cyNode.addClass("highlight");
+          }
+          row.classList.add("highlight");
+        });
+        row.addEventListener("mouseout", () => {
+          const nodeId = row.getAttribute("data-node-id");
+          const cyNode = cy.getElementById(nodeId);
+          if (cyNode) {
+            cyNode.removeClass("highlight");
+          }
+          row.classList.remove("highlight");
+        });
+      });
+    }
+  }
+
+  customElements.define("visa-vis", DagVis);
+</script>
+{% endblock %}
