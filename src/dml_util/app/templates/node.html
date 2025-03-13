@@ -1,0 +1,11 @@
+{% extends "layout.html" %} {% block title %}DAG{% endblock %} {% block content
+%}
+
+<div class="notebook-container">
+  <iframe 
+    src="{{ notebook_url }}" 
+    class="notebook-iframe" 
+    sandbox="allow-scripts allow-same-origin">
+  </iframe>
+</div>
+{% endblock %}

@@ -2,61 +2,40 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>{% block title %}My Notebook Viewer{% endblock %}</title>
-    <!-- Bootstrap CSS from CDN -->
+    <title>{% block title %}daggerml{% endblock %}</title>
     <link
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
     <style>
-      /* Define brand colors and theme neutrals */
       :root {
-        /* Brand Colors */
-        --brand-primary: #ADD8E6;    /* Baby Blue */
-        --brand-secondary: #228B22;  /* Deep Green */
-        --accent-color: #D4AF37;     /* Muted Gold Accent */
+        --color-pastel-cyan: #a8d5e3;
+        --color-dark-teal: #395b50;
+        --color-muted-blue: #7681b3;
+        --color-eggplant: #493548;
+        --color-cream: #f2f0ea;
+        --color-olive-green: #9ea958;
+        --color-soft-red: #ed5b6b;
+        --color-black: #000;
+        --color-darkgrey: #444;
 
-        /* Light theme neutrals */
-        --background-color-light: #FFFFFF;
-        --text-color-light: #333333;
-        --border-color-light: #ddd;
+        --navbar-bg: var(--color-pastel-cyan);
+        --navbar-text: var(--color-black);
+        --navbar-border: var(--color-dark-teal);
 
-        /* Dark theme neutrals */
-        --background-color-dark: #1a1a1a;
-        --text-color-dark: #FFFFFF;
-        --border-color-dark: #444;
-
-        /* Navbar colors for light theme */
-        --navbar-bg-light: var(--background-color-light);
-        --navbar-text-light: var(--brand-secondary); /* Use deep green for navbar text */
-        --navbar-border-light: #e0e0e0;
-
-        /* Navbar colors for dark theme */
-        --navbar-bg-dark: var(--background-color-dark);
-        --navbar-text-dark: var(--brand-primary);
-        --navbar-border-dark: #374151;
-
-        /* Common (default/light) assignments */
         --background-color: var(--background-color-light);
-        --text-color: var(--text-color-light);
-        --border-color: var(--border-color-light);
-        --navbar-bg: var(--navbar-bg-light);
-        --navbar-text: var(--navbar-text-light);
-        --navbar-border: var(--navbar-border-light);
+        --border-color: var(--color-cream); /* #ddd; */
+        --text-color: var(--color-black);
       }
 
       /* Dark theme overrides */
       html[data-bs-theme="dark"] {
-        --background-color: var(--background-color-dark);
-        --text-color: var(--text-color-dark);
-        --border-color: var(--border-color-dark);
-        --navbar-bg: var(--navbar-bg-dark);
-        --navbar-text: var(--navbar-text-dark);
-        --navbar-border: var(--navbar-border-dark);
+        --background-color: var(--color-black);
+        --border-color: var(--color-darkgrey);
+        --text-color: var(--color-cream);
       }
 
-      /* Global styles using our common variables */
       body {
         background-color: var(--background-color);
         color: var(--text-color);
@@ -77,25 +56,16 @@
         border: 1px solid var(--navbar-border);
       }
 
-      /* Example: Using the border-color variable elsewhere */
       .grid-line {
         border-color: var(--border-color);
       }
 
-      /* Theme toggle button */
       #themeToggle {
         border: none;
         background: none;
         outline: none;
         font-size: 1.5rem;
-        color: inherit;
-      }
-
-      /* Example for a custom component using the same approach */
-      visa-vis {
-        --vis-bg: var(--navbar-bg);
-        --vis-text: var(--navbar-text);
-        --vis-border: var(--navbar-border);
+        color: var(--navbar-text);
       }
     </style>
     {% block extra_header %}{% endblock %}
@@ -103,7 +73,7 @@
   <body>
     <nav class="navbar navbar-expand-lg mb-4">
       <div class="container-fluid">
-        <a class="navbar-brand" href="{{ url_for('index') }}">Notebook Viewer</a>
+        <a class="navbar-brand" href="{{ url_for('index') }}">daggerml</a>
         <button
           class="navbar-toggler"
           type="button"
@@ -116,30 +86,12 @@
           <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="navbarNavDropdown">
-          {% if commits is defined %}
-          <ul class="navbar-nav">
-            <li class="nav-item dropdown">
-              <a
-                class="nav-link dropdown-toggle"
-                href="#"
-                id="commitsDropdown"
-                role="button"
-                data-bs-toggle="dropdown"
-                aria-expanded="false"
-              >
-                Commits
-              </a>
-              <ul class="dropdown-menu" aria-labelledby="commitsDropdown">
-                {% for commit in commits %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('dag_page', dag_id=commit) }}">
-                    {{ commit }}
-                  </a>
-                </li>
-                {% endfor %}
-              </ul>
-            </li>
-          </ul>
+          {% if dropdowns is defined %}
+            <ul class="navbar-nav">
+              {% for name, links in dropdowns.items() %}
+                {% include 'nav-dropdown.html' %}
+              {% endfor %}
+            </ul>
           {% endif %}
           <div class="d-flex ms-auto">
             <button id="themeToggle" class="btn">

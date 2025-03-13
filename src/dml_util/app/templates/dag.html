@@ -33,7 +33,7 @@
             #cy {
               width: 100%;
               height: 100%;
-              text-color: var(--text-color);
+              color: var(--text-color);
               position: relative;
               grid-area: graph;
               background-size: 40px 40px;
@@ -51,6 +51,9 @@
               white-space: pre-line;
               overflow: hidden;
               text-overflow: ellipsis;
+              background-color: var(--background-color);
+              color: var(--text-color);
+              border: 1px solid var(--border-color);
             }
             .legend {
               position: absolute;
@@ -61,6 +64,7 @@
               border-radius: 5px;
               border: 1px solid var(--border-color);
               box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+              color: var(--text-color);
             }
             .legend-item {
               display: flex;
@@ -77,12 +81,14 @@
               width: 20px;
               height: 20px;
               margin-right: 10px;
-              background-color: var(--navbar-text);  /* #444; */
+              background-color: var(--text-color);  /* #444; */
             }
             .table-container {
               max-height: 300px;
               overflow-y: auto;
               grid-area: table;
+              background-color: var(--background-color);
+              color: var(--text-color);
             }
             table {
               width: 100%;
@@ -92,16 +98,17 @@
             th, td {
               padding: 12px;
               text-align: left;
-              border-bottom: 1px solid #ddd;
+              border-bottom: 1px solid var(--border-color);
             }
             th {
               position: sticky;
               top: 0;
+              background-color: var(--background-color);
             }
-            tr:hover { background-color: #f9f9f9; }
+            tr:hover { background-color: var(--border-color); }
             /* Table row highlighting */
             tr.highlight {
-              background-color: #ffff99;  /* light yellow */
+              background-color: rgba(255, 255, 0, 0.2);
               transition: background-color 0.2s ease;
             }
             /* Cytoscape node highlighting */
@@ -114,20 +121,7 @@
             }
           </style>
           <div id="cy">
-            <div class="legend">
-              <h3 style="margin-top: 0">Color</h3>
-              <div class="legend-item">
-                <div class="legend-color" style="border-color: yellowgreen; background-color: yellowgreen"></div>
-                <span>Literal</span>
-              </div>
-              <div class="legend-item">
-                <div class="legend-color" style="border-color: tomato; background-color: tomato"></div>
-                <span>Function</span>
-              </div>
-              <div class="legend-item">
-                <div class="legend-color" style="border-color: orange; background-color: orange"></div>
-                <span>Import</span>
-              </div>
+            <div class="legend" id="cy-legend">
               <h3>Shape</h3>
               <div class="legend-item">
                 <div class="legend-shape" style="border-radius: 3px"></div>
@@ -184,15 +178,17 @@
     initCytoscape() {
       let graphData = {};
       try {
+        console.log(this.getAttribute("data-json"));
         graphData = JSON.parse(this.getAttribute("data-json"));
       } catch (e) {
         console.error("Invalid JSON data for dag-vis", e);
       }
 
+      var _style = window.getComputedStyle(document.body)
       const color_map = {
-        literal: "yellowgreen",
-        fn: "tomato",
-        import: "orange",
+        literal: _style.getPropertyValue("--color-olive-green"),
+        fn: _style.getPropertyValue("--color-pastel-cyan"),
+        import: _style.getPropertyValue("--color-soft-red"),
       };
 
       const cyNodes = graphData.nodes.map((node) => ({
@@ -247,10 +243,10 @@
             selector: "edge",
             style: {
               width: 1,
-              "line-color": "#000",
-              "target-arrow-color": "#000",
+              "line-color": "#7681b3",
+              "target-arrow-color": "#7681b3",
               "target-arrow-shape": "triangle",
-              "source-arrow-color": "#000",
+              "source-arrow-color": "#7681b3",
               "curve-style": "bezier",
             },
           },
@@ -263,6 +259,7 @@
           padding: 50,
         },
       });
+      /* cy.cssVars();*/
 
       const tooltip = this.shadowRoot.querySelector(".tooltip");
       cy.on("mouseover", "node", function (e) {
@@ -291,7 +288,31 @@
         tooltip.style.left = e.renderedPosition.x + 5 + "px";
         tooltip.style.top = e.renderedPosition.y + 20 + "px";
       });
-
+      const legendTable = this.shadowRoot.querySelector("#cy-legend");
+      legendTable.innerHTML = `
+<h3 style="margin-top: 0">Color</h3>
+`
+      Object.entries(color_map).forEach(([a, b]) => {
+        const row = document.createElement("div");
+        const c = a.charAt(0).toUpperCase() + a.slice(1);
+        row.classList.add("legend-item")
+        row.innerHTML = `
+<div class="legend-color" style="border-color: ${b}; background-color: ${b}"></div>
+<span>${c}</span>
+`
+        legendTable.appendChild(row);
+      });
+      legendTable.innerHTML += `
+        <h3>Shape</h3>
+        <div class="legend-item">
+          <div class="legend-shape" style="border-radius: 3px"></div>
+          <span>Internal</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-shape" style="border-radius: 50%"></div>
+          <span>Result</span>
+        </div>
+      `
       const nodeTable = this.shadowRoot.querySelector("#nodeTable");
       graphData.nodes
         .sort((a, b) => ((a.name || "") > (b.name || "") ? 1 : -1))
@@ -299,12 +320,13 @@
           const row = document.createElement("tr");
           row.setAttribute("data-node-id", node.id);
           row.innerHTML = `
-              <td>${node.id}</td>
+              <td><a href=${node.link}>${node.id}</a></td>
               <td>${node.name || ""}</td>
               <td>${node.type}</td>
               <td>${node.value}</td>
               <td>${node.id === graphData.result}</td>
               <td>${node.doc || ""}</td>
+              <td><a href=${node.link}>
             `;
           nodeTable.appendChild(row);
         });

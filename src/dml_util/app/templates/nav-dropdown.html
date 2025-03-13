@@ -1,0 +1,22 @@
+<!-- nav.html -->
+<ul class="navbar-nav">
+  <li class="nav-item dropdown">
+    <a
+      class="nav-link dropdown-toggle"
+      href="#"
+      id="{{ name }}Dropdown"
+      role="button"
+      data-bs-toggle="dropdown"
+      aria-expanded="false"
+    >
+      {{ name }}
+    </a>
+    <ul class="dropdown-menu" aria-labelledby="{{ name }}Dropdown">
+      {% for text, url in links.items() %}
+      <li>
+        <a class="dropdown-item" href="{{ url }}"> {{ text }} </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </li>
+</ul>
