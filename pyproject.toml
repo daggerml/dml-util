@@ -33,7 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dml = [
   "daggerml==0.0.31",
-  "daggerml-cli==0.0.21",
+  "daggerml-cli==0.0.22",
 ]
 app = ["flask==3.1.0"]
 docker = ["docker==7.1.0"]
@@ -52,6 +52,7 @@ dml-util-cfn-exec = "dml_util.executor:Cfn.cli"
 dml-util-ssh-exec = "dml_util.executor:Ssh.cli"
 dml-util-dag = "dml_util.dags:main"
 dml-util-config = "dml_util.baseutil:write_config"
+dml-ui = "dml_util.app:run"
 
 [project.urls]
 Documentation = "https://github.com/daggerml/dml-util#readme"
