@@ -35,6 +35,10 @@ dml = [
   "daggerml==0.0.32",
   "daggerml-cli==0.0.23",
 ]
+nb = [
+  "jupyter",
+  "nbconvert",
+]
 app = ["flask==3.1.0"]
 docker = ["docker==7.1.0"]
 test = [
@@ -91,7 +95,7 @@ python="3.10"
 dependencies = [
   "twine",
 ]
-features = ["dml", "docker", "test"]
+features = ["dml", "docker", "test", "nb"]
 
 [tool.hatch.envs.default.scripts]
 test = 'pytest . {args}'

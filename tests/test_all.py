@@ -202,9 +202,9 @@ class TestFunks(AwsTestCase):
         from dml_util.funk import execute_notebook
 
         s3 = S3Store()
-        dml = Dml()
-        dag = dml.new("bar")
-        dag.nb = s3.put(filepath=_root_ / "tests/assets/notebook.ipynb", suffix=".ipynb")
-        dag.nb_exec = execute_notebook
-        dag.html = dag.nb_exec(dag.nb)
-        dag.result = dag.html
+        with Dml() as dml:
+            dag = dml.new("bar")
+            dag.nb = s3.put(filepath=_root_ / "tests/assets/notebook.ipynb", suffix=".ipynb")
+            dag.nb_exec = execute_notebook
+            dag.html = dag.nb_exec(dag.nb)
+            dag.result = dag.html
