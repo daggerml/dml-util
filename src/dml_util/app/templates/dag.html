@@ -4,6 +4,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"></script>
 
 <style>
   :host {
@@ -44,34 +45,60 @@
 
 {% block content %}
 <div class="h-100">
-  <div id="cy">
-    <div class="legend" id="cy-legend">
-      <h3>Shape</h3>
-      <div class="legend-item">
-        <div class="legend-shape" style="border-radius: 3px"></div>
-        <span>Internal</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-shape" style="border-radius: 50%"></div>
-        <span>Result</span>
+  <h2>Dag</h2>
+  <div class="accordion" id="accordion">
+    <div class="accordion-item">
+      <h2 class="accordion-header">
+        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseViz" aria-expanded="true" aria-controls="collapseViz">
+          Visualization
+        </button>
+      </h2>
+      <div id="collapseViz" class="accordion-collapse collapse show" data-bs-parent="#accordion">
+        <div class="accordion-body">
+          <div id="cy">
+            <div class="legend" id="cy-legend">
+              <h3>Shape</h3>
+              <div class="legend-item">
+                <div class="legend-shape" style="border-radius: 3px"></div>
+                <span>Internal</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-shape" style="border-radius: 50%"></div>
+                <span>Result</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="table-responsive table-hover">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Name</th>
-          <th>Parent</th>
-          <th>Nodetype</th>
-          <th>Datatype</th>
-          <th>Result?</th>
-          <th>Docstring</th>
-        </tr>
-      </thead>
-      <tbody id="nodeTable"></tbody>
-    </table>
+    <div class="accordion-item">
+      <h2 class="accordion-header">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseData" aria-expanded="false" aria-controls="collapseData">
+          Node Table
+        </button>
+      </h2>
+      <div id="collapseData" class="accordion-collapse collapse" data-bs-parent="#accordion">
+        <div class="accordion-body">
+          <div class="table-responsive table-hover">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Parent</th>
+                  <th>Nodetype</th>
+                  <th>Datatype</th>
+                  <th>Result?</th>
+                  <th>Docstring</th>
+                </tr>
+              </thead>
+              <tbody id="nodeTable">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -85,14 +112,32 @@
     .forEach((node, index) => {
       let parent = "";
       if (node.parent) {
-        parent = `<a href=${node.parent_link}>${node.parent}</a>`
+        parent = `<a href=${node.parent_link}>${node.parent}</a>`;
+      }
+      let node_type = node.node_type;
+      if (node.sublist) {
+        let inner = node.sublist
+          .map((subnode, index) => {
+            return `<li><a href="${subnode[1]}" class="dropdown-item">${subnode[0].substring(0, 8)}</a></li>`
+          })
+          .reduce(function(a, b){ return a + b });
+        node_type = `
+          <div class="dropdown">
+            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              ${node_type}
+            </button>
+            <ul class="dropdown-menu">
+              ${inner}
+            </ul>
+          </div>
+        `
       }
       nodeTable.innerHTML += `
         <tr data-node-id="${node.id}">
           <td><a href=${node.link}>${node.id.substring(0, 8)}</a></td>
           <td>${node.name || ""}</td>
           <td>${parent}</td>
-          <td>${node.node_type}</td>
+          <td>${node_type}</td>
           <td>${node.data_type}</td>
           <td>${node.id === graphData.result}</td>
           <td>${node.doc || ""}</td>
@@ -102,6 +147,8 @@
 
   document.addEventListener("DOMContentLoaded", function(){
     initCytoscape();
+    const popoverTriggerList = document.querySelectorAll('[data-bs-toggle="popover"]')
+    const popoverList = [...popoverTriggerList].map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl))
   });
 
   function initCytoscape() {

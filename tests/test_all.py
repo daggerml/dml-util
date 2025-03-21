@@ -6,24 +6,23 @@ import subprocess
 import sys
 import tempfile
 import time
-import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
 from unittest import TestCase, mock
 
+import boto3
 from daggerml import Dml
 from daggerml.core import Error
 
-from dml_util import SSH_EXEC, funkify
+from dml_util import SSH_EXEC, S3Store, funkify
+from dml_util.baseutil import S3_BUCKET
+from tests.test_baseutil import AwsTestCase
 
 _root_ = Path(__file__).parent.parent
 
 
 class TestBasic(TestCase):
-    def setUp(self):
-        os.environ["COVERAGE_PROCESS_START"] = os.path.join(os.getcwd(), ".coveragerc")
-
     def test_funkify(self):
         def fn(*args):
             return sum(args)
@@ -61,7 +60,7 @@ class TestBasic(TestCase):
                         d0.n0 = d0.f0(1, 2, 3)
 
 
-class TestSSH(unittest.TestCase):
+class TestSSH(TestCase):
     def setUp(self):
         # Create a temporary directory for our files.
         self.tmpdir = tempfile.mkdtemp()
@@ -184,3 +183,28 @@ class TestSSH(unittest.TestCase):
                 dag.fn = fn
                 dag.ans = dag.fn(*vals)
                 assert dag.ans.value() == sum(vals)
+
+
+class TestFunks(AwsTestCase):
+    def setUp(self):
+        super().setUp()
+        boto3.client("s3", endpoint_url=self.endpoint).create_bucket(Bucket=S3_BUCKET)
+
+    def tearDown(self):
+        s3 = S3Store()
+        s3.rm(*s3.ls(recursive=True))
+        super().tearDown()
+
+    def test_notebooks(self):
+        from daggerml import Dml
+
+        from dml_util import S3Store
+        from dml_util.funk import execute_notebook
+
+        s3 = S3Store()
+        dml = Dml()
+        dag = dml.new("bar")
+        dag.nb = s3.put(filepath=_root_ / "tests/assets/notebook.ipynb", suffix=".ipynb")
+        dag.nb_exec = execute_notebook
+        dag.html = dag.nb_exec(dag.nb)
+        dag.result = dag.html

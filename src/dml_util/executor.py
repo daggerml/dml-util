@@ -220,12 +220,15 @@ class Docker(LocalRunner):
                 with open(f"{tmpd}/output.dump") as f:
                     return f.read()
             _, exit_code_str = self._run_command(["docker", "inspect", "-f", "{{.State.ExitCode}}", cid])
+            _, logs = self._run_command(["docker", "logs", cid])
             exit_code = int(exit_code_str)
             msg = f"""
             job {self.cache_key}
               finished with status {status}
               exit code {exit_code}
               No output written
+              Logs:
+                {logs}
             """.strip()
             raise RuntimeError(msg)
         finally:
@@ -287,8 +290,8 @@ class Cfn(LocalRunner):
 
     def submit(self, client):
         assert Dml is not None, "dml is not installed..."
-        with Dml(data=self.dump) as dml:
-            with dml.new(f"fn:{self.cache_key}", f"execution of: {self.cache_key}") as dag:
+        with Dml() as dml:
+            with dml.new(data=self.dump) as dag:
                 name, js, params = dag.argv[1:4].value()
         old_state, msg = self.describe_stack(client, name, None)
         fn = client.create_stack if old_state is None else client.update_stack
@@ -322,8 +325,8 @@ class Cfn(LocalRunner):
                 result = dump
 
             try:
-                with Dml(data=self.dump, message_handler=_handler) as dml:
-                    with dml.new(f"fn:{self.cache_key}", f"execution of: {self.cache_key}") as dag:
+                with Dml() as dml:
+                    with dml.new(data=self.dump, message_handler=_handler) as dag:
                         for k, v in state["outputs"].items():
                             dag[k] = v
                         dag.stack_id = state["StackId"]
@@ -359,6 +362,6 @@ def aws_fndag():
         with open(outdata, "w") as f:
             f.write(dump)
 
-    with Dml(data=_get_data(), message_handler=_handler) as dml:
-        with dml.new("test", "test") as dag:
+    with Dml() as dml:
+        with dml.new(data=_get_data(), message_handler=_handler) as dag:
             yield dag

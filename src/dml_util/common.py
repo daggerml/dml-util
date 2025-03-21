@@ -60,8 +60,8 @@ def _fnk(base_resource, fn_sources, params, fn_name, extra_lines):
                 f.write(dump)
 
         if __name__ == "__main__":
-            with Dml(data=_get_data(), message_handler=_handler) as dml:
-                with dml.new("test", "test") as dag:
+            with Dml() as dml:
+                with dml.new(data=_get_data(), message_handler=_handler) as dag:
                     res = {fn_name}(dag)
                     if dag._ref is None:
                         dag.result = res

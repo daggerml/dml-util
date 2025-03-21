@@ -6,62 +6,79 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/python.min.js"></script>
 {% endblock %}
 
-{% block title %}DAG{% endblock %}
+{% block title %}Node{% endblock %}
 
 {% block content %}
-  <div class="row">
-    <div class="col-12">
-      <div class="table-container">
-        <table class="table table-striped table-bordered">
-          <thead>
-            <tr>
-              <th>Dag</th>
-              <th>Node</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><a href="{{ dag_link }}">{{ dag_id }}</a></td>
-              <td>{{ node_id }}</td>
-            </tr>
-          </tbody>
-        </table>
+  <h2>Node</h2>
+  <div class="accordion" id="accordion">
+    <div class="accordion-item">
+      <h2 class="accordion-header">
+        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseInfo" aria-expanded="true" aria-controls="collapseInfo">
+          Info
+        </button>
+      </h2>
+      <div id="collapseInfo" class="accordion-collapse collapse show" data-bs-parent="#accordion">
+        <div class="accordion-body">
+          <table class="table table-striped table-bordered">
+            <thead>
+              <tr>
+                <th>Dag</th>
+                <th>Node</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="{{ dag_link }}">{{ dag_id }}</a></td>
+                <td>{{ node_id }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="row">
-    <div class="col-md-8 offset-md-2">
-      <div class="card">
-        <div class="card-header bg-primary text-white">
-          <h4 class="mb-0">Data</h4>
-        </div>
-        <div class="card-body">
+    <div class="accordion-item">
+      <h2 class="accordion-header">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseData" aria-expanded="false" aria-controls="collapseData">
+          Data
+        </button>
+      </h2>
+      <div id="collapseData" class="accordion-collapse collapse" data-bs-parent="#accordion">
+        <div class="accordion-body">
           <pre><code class="language-python">{{ code }}</code></pre>
         </div>
       </div>
     </div>
-  </div>
-  {% if script %}
-    <div class="row">
-      <div class="col-md-8 offset-md-2">
-        <div class="card">
-          <div class="card-header bg-primary text-white">
-            <h4 class="mb-0">Code</h4>
-          </div>
-          <div class="card-body">
+    {% if script %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCode" aria-expanded="false" aria-controls="collapseCode">
+            Code
+          </button>
+        </h2>
+        <div id="collapseCode" class="accordion-collapse collapse" data-bs-parent="#accordion">
+          <div class="accordion-body">
             <pre><code class="language-python">{{ script }}</code></pre>
           </div>
         </div>
       </div>
-    </div>
-  {% endif %}
-  {% if html_uri %}
-    <div class="notebook-container">
-      <div class="embedded-content">
-        <iframe src="{{ html_uri }}" style="width: 100%; height: 100vh; border: none;"></iframe>
+    {% endif %}
+    {% if html_uri %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCode" aria-expanded="false" aria-controls="collapseCode">
+            HTML
+          </button>
+        </h2>
+        <div id="collapseCode" class="accordion-collapse collapse" data-bs-parent="#accordion">
+          <div class="accordion-body">
+            <iframe src="{{ html_uri }}"
+                    style="width: 100%; height: 100vh; border: none;" 
+                    sandbox="allow-scripts allow-same-origin"></iframe>
+          </div>
+        </div>
       </div>
-    </div>
-  {% endif %}
+    {% endif %}
+  </div>
   <script>
   document.addEventListener('DOMContentLoaded', function() {
     hljs.highlightAll();

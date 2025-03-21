@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from pprint import pformat
 
 from daggerml import Dml, Resource
 from flask import Flask, abort, render_template, url_for
@@ -56,10 +57,10 @@ def dag_page(repo, branch, dag_id):
         },
     }
     try:
-        dag_data = dml("dag", "graph", "--output", "json", dag_id)
+        dag_data = dml("dag", "describe", dag_id)
     except Exception:
         logger.exception("cannot graph dag")
-        abort(404, f"No such dag: {dag_id}")
+        abort(404, f"problem graphing dag: {dag_id}")
     for node in dag_data["nodes"]:
         node["link"] = url_for(
             "node_page",
@@ -69,6 +70,26 @@ def dag_page(repo, branch, dag_id):
             node_id=node["id"] or "",
         )
         if node["node_type"] in ["import", "fn"]:
+            if node["node_type"] == "fn":
+                sublist = [
+                    [x["arg"], x["source"]]
+                    for x in dag_data["edges"]
+                    if x["type"] == "node" and x["target"] == node["id"]
+                ]
+                sublist = sorted(sublist, key=lambda x: x[0])
+                node["sublist"] = [
+                    [
+                        b,
+                        url_for(
+                            "node_page",
+                            repo=repo,
+                            branch=branch,
+                            dag_id=dag_id,
+                            node_id=b,
+                        ),
+                    ]
+                    for a, b in sublist
+                ]
             (tgt_dag,) = [x["target"] for x in dag_data["edges"] if x["type"] == "dag" and x["source"] == node["id"]]
             node["parent"] = tgt_dag
             node["parent_link"] = url_for("dag_page", repo=repo, branch=branch, dag_id=tgt_dag)
@@ -101,11 +122,17 @@ def node_page(repo, branch, dag_id, node_id):
     if isinstance(val, list) and len(val) > 0 and isinstance(val[0], Resource):
         script = (val[0].data or {}).get("script")
     if isinstance(val, Resource):
-        if re.match(r"s3://.*\.html", val.uri) and s3.exists(val):
+        script = (val.data or {}).get("script")
+        if re.match(r"^s3://.*\.html$", val.uri) and s3.exists(val):
             bucket, key = s3.parse_uri(val)
             html_uri = s3.client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket, "Key": key},
+                Params={
+                    "Bucket": bucket,
+                    "Key": key,
+                    "ResponseContentDisposition": "inline",
+                    "ResponseContentType": "text/html",
+                },
                 ExpiresIn=3600,  # URL expires in 1 hour
             )
     return render_template(
@@ -114,7 +141,7 @@ def node_page(repo, branch, dag_id, node_id):
         dag_id=dag_id,
         dag_link=url_for("dag_page", repo=repo, branch=branch, dag_id=dag_id),
         node_id=node_id,
-        code=repr(val),
+        code=pformat(val, depth=3),
         html_uri=html_uri,
         script=script,
     )

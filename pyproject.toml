@@ -32,14 +32,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dml = [
-  "daggerml==0.0.31",
-  "daggerml-cli==0.0.22",
+  "daggerml==0.0.32",
+  "daggerml-cli==0.0.23",
 ]
 app = ["flask==3.1.0"]
 docker = ["docker==7.1.0"]
 test = [
   "pytest",
-  "pytest-cov",
   "moto[all,server]",
 ]
 
@@ -96,7 +95,6 @@ features = ["dml", "docker", "test"]
 
 [tool.hatch.envs.default.scripts]
 test = 'pytest . {args}'
-coverage-report = 'pytest --cov-report term-missing --cov=dml_util tests/'
 dml-build = "hatch build && twine upload -r {args:testpypi} dist/*"
 
 [tool.hatch.envs.default.env-vars]
@@ -151,28 +149,6 @@ ban-relative-imports = "all"
 # Tests can use magic values, assertions, and relative imports
 "tests/**/*" = ["PLR2004", "S101", "TID252"]
 "examples/**/*" = ["I001"]
-
-[tool.coverage.run]
-source_pkgs = ["dml_util"]
-concurrency = ["multiprocessing", "thread"]
-branch = true
-parallel = true
-sigterm = true
-omit = [
-  "src/dml_util/__about__.py",
-]
-data_file = ".coverage"
-
-[tool.coverage.paths]
-dml_util = ["src/dml_util", "*/dml-util/src/dml_util"]
-tests = ["tests", "*/dml-util/tests"]
-
-[tool.coverage.report]
-exclude_lines = [
-  "no cov",
-  "if __name__ == .__main__.:",
-  "if TYPE_CHECKING:",
-]
 
 [tool.pyright]
 include = ["src"]
