@@ -4,6 +4,7 @@ import re
 from pprint import pformat
 
 from daggerml import Dml, Resource
+from daggerml.core import Ref
 from flask import Flask, abort, render_template, url_for
 
 from dml_util.baseutil import S3Store
@@ -61,6 +62,7 @@ def dag_page(repo, branch, dag_id):
     except Exception:
         logger.exception("cannot graph dag")
         abort(404, f"problem graphing dag: {dag_id}")
+    script = None
     for node in dag_data["nodes"]:
         node["link"] = url_for(
             "node_page",
@@ -93,11 +95,16 @@ def dag_page(repo, branch, dag_id):
             (tgt_dag,) = [x["target"] for x in dag_data["edges"] if x["type"] == "dag" and x["source"] == node["id"]]
             node["parent"] = tgt_dag
             node["parent_link"] = url_for("dag_page", repo=repo, branch=branch, dag_id=tgt_dag)
+    if dag_data.get("argv"):
+        node = dml.get_node_value(Ref("node/" + dag_data["argv"]))
+        if "script" in node[0].data:
+            script = node[0].data["script"]
     return render_template(
         "dag.html",
         dropdowns=dropdowns,
         # data=json.dumps(dag_data),
         data=dag_data,
+        script=script,
     )
 
 
