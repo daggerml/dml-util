@@ -140,6 +140,11 @@ class TestFunks(AwsTestCase):
                 )
                 dag.baz = dag.fn(*vals)
                 assert dag.baz.value() == sum(vals)
+                dag2 = dml.load(dag.baz)
+                assert dag2.result is not None
+            dag2 = dml("dag", "describe", dag2._ref.to.split("/")[-1])
+            logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
+            assert logs == {"stdout/stderr": "testing stdout...\ntesting stderr..."}
 
     def test_notebooks(self):
         s3 = S3Store()

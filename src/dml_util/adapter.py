@@ -335,8 +335,13 @@ class Docker(LocalRunner):
     def maybe_complete(self, tmpd, cid, status="???"):
         try:
             if os.path.exists(f"{tmpd}/output.dump"):
+                s3 = S3Store()
+                _, stdout = self._run_command(["docker", "logs", cid])
                 with open(f"{tmpd}/output.dump") as f:
-                    return f.read()
+                    return {
+                        "logs": {"stdout/stderr": s3.put(stdout.encode(), suffix=".log").uri},
+                        "dump": f.read(),
+                    }
             _, exit_code_str = self._run_command(["docker", "inspect", "-f", "{{.State.ExitCode}}", cid])
             _, logs = self._run_command(["docker", "logs", cid])
             exit_code = int(exit_code_str)
@@ -367,9 +372,7 @@ class Docker(LocalRunner):
             return state, f"container {cid} running", response
         elif status in ["exited", "paused", "dead", "no-longer-exists"]:
             msg = f"container {cid} finished with status {status!r}"
-            dump = self.maybe_complete(tmpd, cid, status)
-            if dump is not None:
-                response["dump"] = dump
+            response = self.maybe_complete(tmpd, cid, status)
             return state, msg, response
 
 
