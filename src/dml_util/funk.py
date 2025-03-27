@@ -1,12 +1,94 @@
-from dml_util import funkify
+import re
+from functools import partial
+from inspect import getsource
+from textwrap import dedent
+
+from dml_util.adapter import Adapter
 
 
-@funkify
-def query_update(dag):
-    from dml_util.common import update_query
+def _fnk(fn, extra_fns, extra_lines):
+    def get_src(f):
+        lines = dedent(getsource(f)).split("\n")
+        lines = [line for line in lines if not re.match("^@.*funkify", line)]
+        return "\n".join(lines)
 
-    old_rsrc, params = dag.argv[1:].value()
-    dag.result = update_query(old_rsrc, params)
+    tpl = dedent(
+        """
+        #!/usr/bin/env python3
+        import os
+        from urllib.parse import urlparse
+
+        from daggerml import Dml
+
+        {src}
+
+        {eln}
+
+        def _get_data():
+            indata = os.environ["DML_INPUT_LOC"]
+            p = urlparse(indata)
+            if p.scheme == "s3":
+                import boto3
+                return (
+                    boto3.client("s3")
+                    .get_object(Bucket=p.netloc, Key=p.path[1:])
+                    ["Body"].read().decode()
+                )
+            with open(indata) as f:
+                return f.read()
+
+        def _handler(dump):
+            outdata = os.environ["DML_OUTPUT_LOC"]
+            p = urlparse(outdata)
+            if p.scheme == "s3":
+                import boto3
+                return (
+                    boto3.client("s3")
+                    .put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
+                )
+            with open(outdata, "w") as f:
+                f.write(dump)
+
+        if __name__ == "__main__":
+            with Dml() as dml:
+                with dml.new(data=_get_data(), message_handler=_handler) as dag:
+                    res = {fn_name}(dag)
+                    if dag._ref is None:
+                        dag.result = res
+        """
+    ).strip()
+    src = tpl.format(
+        src="\n\n".join([get_src(f) for f in [*extra_fns, fn]]),
+        fn_name=fn.__name__,
+        eln="\n".join(extra_lines),
+    )
+    return src
+
+
+def funkify(
+    fn=None,
+    uri="python",
+    data=None,
+    adapter="local",
+    extra_fns=(),
+    extra_lines=(),
+):
+    if fn is None:
+        return partial(
+            funkify,
+            uri=uri,
+            data=data,
+            adapter=adapter,
+            extra_fns=extra_fns,
+            extra_lines=extra_lines,
+        )
+    adapter_ = Adapter.ADAPTERS.get(adapter)
+    if adapter_ is None:
+        raise ValueError(f"Adapter: {adapter!r} does not exist")
+    src = _fnk(fn, extra_fns, extra_lines)
+    resource = adapter_.funkify(uri, data={"script": src, **(data or {})})
+    object.__setattr__(resource, "fn", fn)
+    return resource
 
 
 @funkify
@@ -57,6 +139,7 @@ def execute_notebook(dag):
         with open(f"{tmpd}/nb.ipynb", "wb") as f:
             f.write(s3.get(dag.argv[1]))
         jupyter = run("which", "jupyter", check=True)
+        print(f"jupyter points to: {jupyter}")
         run(
             jupyter,
             "nbconvert",

@@ -6,6 +6,7 @@ import subprocess
 import traceback
 from dataclasses import dataclass, field
 from io import BytesIO
+from itertools import product
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from time import time
@@ -73,6 +74,22 @@ S3_BUCKET = CONFIG["s3_bucket"]
 S3_PREFIX = CONFIG["s3_prefix"]
 
 
+def tree_map(predicate, fn, item):
+    if predicate(item):
+        item = fn(item)
+    if isinstance(item, list):
+        return [tree_map(predicate, fn, x) for x in item]
+    if isinstance(item, dict):
+        return {k: tree_map(predicate, fn, v) for k, v in item.items()}
+    return item
+
+
+def dict_product(d):
+    keys = list(d.keys())
+    for combination in product(*d.values()):
+        yield dict(zip(keys, combination))
+
+
 def now():
     return time()
 
@@ -93,17 +110,17 @@ class DagExecError(Exception):
 
 
 class WithDataError(Exception):
-    def __init__(self, message, dump=None):
+    def __init__(self, message, response=None):
         super().__init__(message)
-        self.dump = dump
+        self.response = response
 
     @classmethod
-    def from_ex(cls, e, dump=None):
+    def from_ex(cls, e, response=None):
         if isinstance(e, WithDataError):
-            e.dump = dump or e.dump
+            e.response = response or e.response
             return e
         msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
-        return cls(msg, dump=dump)
+        return cls(msg, response=response)
 
 
 def js_dump(data, **kw):
@@ -326,13 +343,17 @@ class DynamoState(State):
             pass
 
     def delete(self):
-        return self.db.delete_item(
-            TableName=self.tb,
-            Key={"cache_key": {"S": self.cache_key}},
-            ConditionExpression="#lk = :lk",
-            ExpressionAttributeNames={"#lk": "lock_key"},
-            ExpressionAttributeValues={":lk": {"S": self.run_id}},
-        )
+        try:
+            return self.db.delete_item(
+                TableName=self.tb,
+                Key={"cache_key": {"S": self.cache_key}},
+                ConditionExpression="#lk = :lk",
+                ExpressionAttributeNames={"#lk": "lock_key"},
+                ExpressionAttributeValues={":lk": {"S": self.run_id}},
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
 
 
 @dataclass
@@ -408,17 +429,17 @@ class Runner:
     def run(self):
         state = self.state.get()
         if state is None:
-            return None, self._fmt("Could not acquire job lock")
+            return {}, self._fmt("Could not acquire job lock")
         try:
             logger.info("getting info from %r", self.state_class.__name__)
-            state, msg, dump = self.update(state)
-            self.put_state(state, dump is not None)
-            return dump, self._fmt(msg)
+            state, msg, response = self.update(state)
+            self.put_state(state, bool(response))
+            return response, self._fmt(msg)
         except Exception as e:
             if isinstance(e, (WithDataError, DagExecError)):
                 self.put_state(state, True)
             if isinstance(e, WithDataError):
-                return e.dump, str(e)
+                return e.response, str(e)
             raise DagExecError.from_ex(e) from None
         finally:
             self.state.unlock()
@@ -441,11 +462,11 @@ class LambdaRunner(Runner):
     @classmethod
     def handler(cls, event, context):
         try:
-            dump, msg = cls(**event).run()
-            status = 201 if dump is None else 200
-            return {"status": status, "dump": dump, "message": msg}
+            response, msg = cls(**event).run()
+            status = 200 if response else 201
+            return {"status": status, "response": response, "message": msg}
         except DagExecError as e:
-            return {"status": 400, "dump": None, "message": str(e)}
+            return {"status": 400, "response": None, "message": str(e)}
 
     def delete(self, state):
         if self.s3.exists(self.output_loc):

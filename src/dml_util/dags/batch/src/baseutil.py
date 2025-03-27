@@ -6,6 +6,7 @@ import subprocess
 import traceback
 from dataclasses import dataclass, field
 from io import BytesIO
+from itertools import product
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from time import time
@@ -18,8 +19,12 @@ from botocore.exceptions import ClientError
 
 try:
     from daggerml import Resource
+    from daggerml.core import Node
+
+    has_dml = True
 except ImportError:
-    Resource = str
+    Resource = Node = str
+    has_dml = False
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 5  # seconds
@@ -67,6 +72,22 @@ def write_config():
 CONFIG = load_config()
 S3_BUCKET = CONFIG["s3_bucket"]
 S3_PREFIX = CONFIG["s3_prefix"]
+
+
+def tree_map(predicate, fn, item):
+    if predicate(item):
+        item = fn(item)
+    if isinstance(item, list):
+        return [tree_map(predicate, fn, x) for x in item]
+    if isinstance(item, dict):
+        return {k: tree_map(predicate, fn, v) for k, v in item.items()}
+    return item
+
+
+def dict_product(d):
+    keys = list(d.keys())
+    for combination in product(*d.values()):
+        yield dict(zip(keys, combination))
 
 
 def now():
@@ -140,6 +161,10 @@ class S3Store:
         return f"{S3_PREFIX}/runs/{cache_key}"
 
     def parse_uri(self, name_or_uri):
+        if not isinstance(name_or_uri, str):
+            if isinstance(name_or_uri, Node):
+                name_or_uri = name_or_uri.value()
+            name_or_uri = name_or_uri.uri
         p = urlparse(name_or_uri)
         if p.scheme == "s3":
             return p.netloc, p.path[1:]
@@ -318,13 +343,17 @@ class DynamoState(State):
             pass
 
     def delete(self):
-        return self.db.delete_item(
-            TableName=self.tb,
-            Key={"cache_key": {"S": self.cache_key}},
-            ConditionExpression="#lk = :lk",
-            ExpressionAttributeNames={"#lk": "lock_key"},
-            ExpressionAttributeValues={":lk": {"S": self.run_id}},
-        )
+        try:
+            return self.db.delete_item(
+                TableName=self.tb,
+                Key={"cache_key": {"S": self.cache_key}},
+                ConditionExpression="#lk = :lk",
+                ExpressionAttributeNames={"#lk": "lock_key"},
+                ExpressionAttributeValues={":lk": {"S": self.run_id}},
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
 
 
 @dataclass
@@ -400,11 +429,11 @@ class Runner:
     def run(self):
         state = self.state.get()
         if state is None:
-            return None, self._fmt("Could not acquire job lock")
+            return {}, self._fmt("Could not acquire job lock")
         try:
             logger.info("getting info from %r", self.state_class.__name__)
             state, msg, dump = self.update(state)
-            self.put_state(state, dump is not None)
+            self.put_state(state, dump.get("dump") is not None)
             return dump, self._fmt(msg)
         except Exception as e:
             if isinstance(e, (WithDataError, DagExecError)):

@@ -92,7 +92,6 @@
                   <th>Parent</th>
                   <th>Nodetype</th>
                   <th>Datatype</th>
-                  <th>Result?</th>
                   <th>Docstring</th>
                 </tr>
               </thead>
@@ -107,7 +106,7 @@
       <div class="accordion-item">
         <h2 class="accordion-header">
           <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCode" aria-expanded="false" aria-controls="collapseCode">
-            Code
+            Executed Code
           </button>
         </h2>
         <div id="collapseCode" class="accordion-collapse collapse" data-bs-parent="#accordion">
@@ -117,16 +116,75 @@
         </div>
       </div>
     {% endif %}
-    {% if fn_args %}
+    {% if logs %}
       <div class="accordion-item">
         <h2 class="accordion-header">
-          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCode" aria-expanded="false" aria-controls="collapseCode">
-            Args
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLogs" aria-expanded="false" aria-controls="collapseLogs">
+            Logs
           </button>
         </h2>
-        <div id="collapseCode" class="accordion-collapse collapse" data-bs-parent="#accordion">
+        <div id="collapseLogs" class="accordion-collapse collapse" data-bs-parent="#accordion">
           <div class="accordion-body">
-            <pre><code class="language-python">{{ script }}</code></pre>
+            <div class="accordion" id="logsAccordion">
+              {% for key, value in logs.items() %}
+                <div class="accordion-item">
+                  <h2 class="accordion-header">
+                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#{{ key }}LogCollapse" aria-expanded="true" aria-controls="{{ key }}LogCollapse">
+                      {{ key }}
+                    </button>
+                  </h2>
+                  <div id="{{ key }}LogCollapse" class="accordion-collapse collapse" data-bs-parent="#logsAccordion">
+                    <div class="accordion-body">
+                      <pre><code class="language-plaintext">{{ value }}</code></pre>
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+    {% if error %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseError" aria-expanded="false" aria-controls="collapseError">
+            Error
+          </button>
+        </h2>
+        <div id="collapseError" class="accordion-collapse collapse" data-bs-parent="#accordion">
+          <div class="accordion-body">
+            <pre><code class="language-python">{{ error }}</code></pre>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+    {% if result %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseResult" aria-expanded="false" aria-controls="collapseResult">
+            Result
+          </button>
+        </h2>
+        <div id="collapseResult" class="accordion-collapse collapse" data-bs-parent="#accordion">
+          <div class="accordion-body">
+            <pre><code class="language-python">{{ result }}</code></pre>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+    {% if html_uri %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseHtml" aria-expanded="false" aria-controls="collapseHtml">
+            HTML
+          </button>
+        </h2>
+        <div id="collapseHtml" class="accordion-collapse collapse" data-bs-parent="#accordion">
+          <div class="accordion-body">
+            <iframe src="{{ html_uri }}"
+                    style="width: 100%; height: 100vh; border: none;" 
+                    sandbox="allow-scripts allow-same-origin"></iframe>
           </div>
         </div>
       </div>
@@ -165,13 +223,12 @@
         `
       }
       nodeTable.innerHTML += `
-        <tr data-node-id="${node.id}">
+        <tr data-node-id="${node.id}" ${node.id == graphData.result? 'class="border border-primary"' : ""}>
           <td><a href=${node.link}>${node.id.substring(0, 8)}</a></td>
           <td>${node.name || ""}</td>
           <td>${parent}</td>
           <td>${node_type}</td>
           <td>${node.data_type}</td>
-          <td>${node.id === graphData.result}</td>
           <td>${node.doc || ""}</td>
         </tr>
       `;

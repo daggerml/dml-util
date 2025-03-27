@@ -76,7 +76,7 @@ class Batch(LambdaRunner):
         if state == {}:
             state = self.submit()
             job_id = state["job_id"]
-            return state, f"{job_id = } submitted", None
+            return state, f"{job_id = } submitted", {}
         dump = None
         job_id, status = self.describe_job(state)
         if status in [SUCCESS_STATE, FAILED_STATE, None]:
@@ -84,7 +84,7 @@ class Batch(LambdaRunner):
                 raise DagExecError(f"{job_id = } : no output")
             dump = self.s3.get("output.dump")
         msg = f"{job_id = } {status}"
-        return state, msg, dump
+        return state, msg, {"dump": dump}
 
     def gc(self, state):
         job_id, status = self.describe_job(state)

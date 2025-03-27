@@ -47,12 +47,8 @@ test = [
 ]
 
 [project.scripts]
-dml-util-lambda-adapter = "dml_util.adapter:lambda_"
-dml-util-local-adapter = "dml_util.adapter:local_"
-dml-util-script-exec = "dml_util.executor:Script.cli"
-dml-util-docker-exec = "dml_util.executor:Docker.cli"
-dml-util-cfn-exec = "dml_util.executor:Cfn.cli"
-dml-util-ssh-exec = "dml_util.executor:Ssh.cli"
+dml-util-lambda-adapter = "dml_util.adapter:Lambda.cli"
+dml-util-local-adapter = "dml_util.adapter:Local.cli"
 dml-util-dag = "dml_util.dags:main"
 dml-util-config = "dml_util.baseutil:write_config"
 dml-ui = "dml_util.app:run"
@@ -105,6 +101,13 @@ dml-build = "hatch build && twine upload -r {args:testpypi} dist/*"
 PYTHONDONTWRITEBYTECODE = "1"
 DML_S3_BUCKET = "dml-doesnotexist"
 DML_S3_PREFIX = "jobs"
+
+[tool.hatch.envs.pandas]
+template = "default"
+features = ["dml"]
+dependencies = [
+  "pandas==2.2.3"
+]
 
 [tool.hatch.envs.app]
 template = "default"

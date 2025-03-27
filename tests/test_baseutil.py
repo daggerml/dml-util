@@ -1,4 +1,5 @@
 import os
+from functools import reduce
 from glob import glob
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,7 +9,13 @@ from unittest import TestCase, skipIf
 import boto3
 
 from dml_util import S3Store
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX, DynamoState, WithDataError
+from dml_util.baseutil import (
+    S3_BUCKET,
+    S3_PREFIX,
+    DynamoState,
+    WithDataError,
+    dict_product,
+)
 
 _root_ = Path(__file__).parent.parent
 
@@ -100,33 +107,6 @@ class TestS3(AwsTestCase):
             s3_tar2 = s3.tar(dml, context)
             assert s3_tar.uri == s3_tar2.uri
 
-    @skipIf(docker is None, "docker not available")
-    @skipIf(Dml is None, "Dml not available")
-    @skipIf(True, "skip for now")  # FIXME: Remove this
-    def test_docker_build(self):
-        from dml_util import DOCKER_EXEC, dkr_build, funkify, query_update
-
-        context = _root_ / "tests/assets/dkr-context"
-
-        def fn(dag):
-            dag.result = sum(dag.argv[1:].value())
-
-        s3 = S3Store()
-        vals = [1, 2, 3]
-        with Dml() as dml:
-            with dml.new("test", "asdf") as dag:
-                dag.tar = s3.tar(dml, context)
-                dag.dkr = dkr_build
-                dag.img = dag.dkr(
-                    dag.tar,
-                    ["--platform", "linux/amd64"],
-                )
-                dag.chg = query_update
-                dag.foo = dag.chg(DOCKER_EXEC, {"image": dag.img})
-                dag.bar = funkify(fn, dag.foo.value(), params={"flags": ["--platform", "linux/amd64"]})
-                dag.baz = dag.bar(*vals)
-                assert dag.baz.value() == sum(vals)
-
     def tearDown(self):
         s3 = S3Store()
         s3.rm(*s3.ls(recursive=True))
@@ -170,6 +150,7 @@ class TestDynamo(AwsTestCase):
         assert db1.get() == {"q": "b"}
         assert db0.unlock() is False
         assert db1.unlock() is True
+        db1.delete()
 
     def tearDown(self):
         self.client.delete_table(TableName=self.tb)
@@ -179,9 +160,17 @@ class TestDynamo(AwsTestCase):
 class TestMisc(TestCase):
     def test_dag_run_error(self):
         msg = "this is a test"
-        dump = "qwer"
+        response = "qwer"
         try:
-            raise WithDataError(msg, dump=dump)
+            raise WithDataError(msg, response=response)
         except WithDataError as e:
             assert str(e) == msg
-            assert e.dump == dump
+            assert e.response == response
+
+    def test_dict_prod(self):
+        param_dict = {"foo": [2, 3], "bar": "abc", "baz": [[5, 5], [5, 8]]}
+        piter = list(dict_product(param_dict))
+        total_len = reduce(lambda a, b: a * len(b), param_dict.values(), 1)
+        assert len(piter) == total_len
+        for k, v in param_dict.items():
+            assert len([x for x in piter if x[k] == v[0]]) == total_len / len(v)

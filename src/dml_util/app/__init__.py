@@ -7,7 +7,7 @@ from daggerml import Dml, Resource
 from daggerml.core import Ref
 from flask import Flask, abort, render_template, url_for
 
-from dml_util.baseutil import S3Store
+from dml_util.baseutil import S3Store, tree_map
 
 app = Flask(__name__)
 ROOT_DIR = os.path.join(os.getcwd(), "root")
@@ -97,14 +97,43 @@ def dag_page(repo, branch, dag_id):
             node["parent_link"] = url_for("dag_page", repo=repo, branch=branch, dag_id=tgt_dag)
     if dag_data.get("argv"):
         node = dml.get_node_value(Ref("node/" + dag_data["argv"]))
-        if "script" in node[0].data:
+        if "script" in (node[0].data or {}):
             script = node[0].data["script"]
+    logs = dag_data["logs"]
+    if logs is not None:
+        s3 = S3Store()
+        logs = tree_map(lambda x: isinstance(x, str), lambda x: s3.get(x).decode(), logs)
+    html_uri = None
+    try:
+        dag = dml.load(dag_id)
+    except Exception:
+        abort(404, f"no such dag (node page): {dag_id}")
+    s3 = S3Store()
+    val = None
+    if dag_data["result"]:
+        val = dag[dag_data["result"]].value()
+        if isinstance(val, Resource) and re.match(r"^s3://.*\.html$", val.uri) and s3.exists(val):
+            bucket, key = s3.parse_uri(val)
+            html_uri = s3.client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": bucket,
+                    "Key": key,
+                    "ResponseContentDisposition": "inline",
+                    "ResponseContentType": "text/html",
+                },
+                ExpiresIn=3600,  # URL expires in 1 hour
+            )
+        val = pformat(val, depth=3)
     return render_template(
         "dag.html",
         dropdowns=dropdowns,
-        # data=json.dumps(dag_data),
         data=dag_data,
         script=script,
+        logs=logs,
+        html_uri=html_uri,
+        error=dag_data["error"],
+        result=val,
     )
 
 

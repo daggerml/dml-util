@@ -9,46 +9,71 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
-from unittest import TestCase, mock
+from unittest import TestCase, mock, skipIf
 
 import boto3
 from daggerml import Dml
 from daggerml.core import Error
 
-from dml_util import SSH_EXEC, S3Store, funkify
+from dml_util import S3Store, funk, funkify
 from dml_util.baseutil import S3_BUCKET
 from tests.test_baseutil import AwsTestCase
 
+try:
+    import docker  # noqa: F401
+except ImportError:
+    docker = None
+
 _root_ = Path(__file__).parent.parent
 
+# TODO: write unit tests for everything
+# TODO: Write a test-adapter that will write to a file and communicate via log messages
 
-class TestBasic(TestCase):
+
+class TestFunks(AwsTestCase):
+    def setUp(self):
+        super().setUp()
+        boto3.client("s3", endpoint_url=self.endpoint).create_bucket(Bucket=S3_BUCKET)
+
+    def tearDown(self):
+        s3 = S3Store()
+        s3.rm(*s3.ls(recursive=True))
+        super().tearDown()
+
     def test_funkify(self):
         def fn(*args):
             return sum(args)
 
-        @funkify(extra_fns=[fn])
+        @funkify(extra_fns=[fn], uri="python", adapter="local")
         def dag_fn(dag):
+            import sys
+
+            print("testing stdout...")
+            print("testing stderr...", file=sys.stderr)
             dag.result = fn(*dag.argv[1:].value())
             return dag.result
 
-        with TemporaryDirectory() as fn_cache_dir:
-            with mock.patch.dict(os.environ, DML_FN_CACHE_DIR=fn_cache_dir):
-                with Dml() as dml:
-                    vals = [1, 2, 3]
-                    d0 = dml.new("d0", "d0")
-                    d0.f0 = dag_fn
-                    d0.n0 = d0.f0(*vals)
-                    assert d0.n0.value() == sum(vals)
-                    # you can get the original back
-                    d0.f1 = funkify(dag_fn.fn, extra_fns=[fn])
-                    d0.n1 = d0.f1(*vals)
-                    assert d0.n1.value() == sum(vals)
+        s3 = S3Store()
+        with Dml() as dml:
+            vals = [1, 2, 3]
+            with dml.new("d0", "d0") as d0:
+                d0.f0 = dag_fn
+                d0.n0 = d0.f0(*vals)
+                assert d0.n0.value() == sum(vals)
+                # you can get the original back
+                d0.f1 = funkify(dag_fn.fn, extra_fns=[fn], uri="python", adapter="local")
+                d0.n1 = d0.f1(*vals)
+                assert d0.n1.value() == sum(vals)
+                dag = dml.load(d0.n1)
+                assert dag.result is not None
+            dag = dml("dag", "describe", dag._ref.to.split("/")[-1])
+            logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
+            assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
 
     def test_funkify_errors(self):
-        @funkify
+        @funkify(uri="python", adapter="local")
         def dag_fn(dag):
-            dag.result = sum(dag.argv[1:].value()) / 0
+            dag.result = dag.argv[1].value() / dag.argv[-1].value()
             return dag.result
 
         with TemporaryDirectory() as fn_cache_dir:
@@ -56,8 +81,73 @@ class TestBasic(TestCase):
                 with Dml() as dml:
                     d0 = dml.new("d0", "d0")
                     d0.f0 = dag_fn
-                    with self.assertRaises(Error):
-                        d0.n0 = d0.f0(1, 2, 3)
+                    with self.assertRaisesRegex(Error, "division by zero"):
+                        d0.n0 = d0.f0(1, 0)
+
+    def test_funkify_hatch(self):
+        @funkify(uri="hatch", adapter="local", data={"env": "pandas"})
+        def dag_fn(dag):
+            import pandas as pd
+
+            dag.result = pd.__version__
+            return dag.result
+
+        with TemporaryDirectory() as fn_cache_dir:
+            with mock.patch.dict(os.environ, DML_FN_CACHE_DIR=fn_cache_dir):
+                with Dml() as dml:
+                    d0 = dml.new("d0", "d0")
+                    d0.f0 = funkify(dag_fn.fn)
+                    with self.assertRaisesRegex(Error, "No module named 'pandas'"):
+                        d0.f0()
+                    d0.f1 = dag_fn
+                    d0.result = d0.f1()
+                    assert d0.result.value() == "2.2.3"
+
+    @skipIf(docker is None, "docker not available")
+    def test_docker_build(self):
+        from dml_util import dkr_build, funkify
+
+        context = _root_  # / "tests/assets/dkr-context"
+
+        def fn(dag):
+            import sys
+
+            print("testing stdout...")
+            print("testing stderr...", file=sys.stderr)
+            dag.result = sum(dag.argv[1:].value())
+
+        s3 = S3Store()
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            with dml.new("test", "asdf") as dag:
+                dag.tar = s3.tar(dml, context, excludes=["tests/*.py"])
+                dag.dkr = dkr_build
+                dag.img = dag.dkr(
+                    dag.tar,
+                    [
+                        "--platform",
+                        "linux/amd64",
+                        "-f",
+                        "tests/assets/dkr-context/Dockerfile",
+                    ],
+                )
+                dag.fn = funkify(
+                    fn,
+                    "docker",
+                    {"image": dag.img.value(), "flags": ["--platform", "linux/amd64"]},
+                    adapter="local",
+                )
+                dag.baz = dag.fn(*vals)
+                assert dag.baz.value() == sum(vals)
+
+    def test_notebooks(self):
+        s3 = S3Store()
+        with Dml() as dml:
+            dag = dml.new("bar")
+            dag.nb = s3.put(filepath=_root_ / "tests/assets/notebook.ipynb", suffix=".ipynb")
+            dag.nb_exec = funk.execute_notebook
+            dag.html = dag.nb_exec(dag.nb)
+            dag.result = dag.html
 
 
 class TestSSH(TestCase):
@@ -152,6 +242,7 @@ class TestSSH(TestCase):
                 time.sleep(0.5)
         else:
             raise RuntimeError("Timeout waiting for sshd to start.")
+        self.uri = f"{self.user}@127.0.0.1"
 
     def tearDown(self):
         # Terminate the sshd process.
@@ -173,8 +264,12 @@ class TestSSH(TestCase):
             "path_dir": os.path.dirname(shutil.which("dml")),
         }
 
-        @funkify(base_resource=SSH_EXEC, params=params)
+        @funkify(uri="ssh", adapter="local", data=params)
         def fn(dag):
+            import sys
+
+            print("testing stdout...")
+            print("testing stderr...", file=sys.stderr)
             dag.result = sum(dag.argv[1:].value())
 
         vals = [1, 2, 3]
@@ -183,28 +278,3 @@ class TestSSH(TestCase):
                 dag.fn = fn
                 dag.ans = dag.fn(*vals)
                 assert dag.ans.value() == sum(vals)
-
-
-class TestFunks(AwsTestCase):
-    def setUp(self):
-        super().setUp()
-        boto3.client("s3", endpoint_url=self.endpoint).create_bucket(Bucket=S3_BUCKET)
-
-    def tearDown(self):
-        s3 = S3Store()
-        s3.rm(*s3.ls(recursive=True))
-        super().tearDown()
-
-    def test_notebooks(self):
-        from daggerml import Dml
-
-        from dml_util import S3Store
-        from dml_util.funk import execute_notebook
-
-        s3 = S3Store()
-        with Dml() as dml:
-            dag = dml.new("bar")
-            dag.nb = s3.put(filepath=_root_ / "tests/assets/notebook.ipynb", suffix=".ipynb")
-            dag.nb_exec = execute_notebook
-            dag.html = dag.nb_exec(dag.nb)
-            dag.result = dag.html
