@@ -84,6 +84,7 @@ class TestFunks(AwsTestCase):
                     with self.assertRaisesRegex(Error, "division by zero"):
                         d0.n0 = d0.f0(1, 0)
 
+    @skipIf(shutil.which("hatch") is None)
     def test_funkify_hatch(self):
         @funkify(uri="hatch", adapter="local", data={"env": "pandas"})
         def dag_fn(dag):
