@@ -1,0 +1,6 @@
+[submodule "submodules/python-lib"]
+	path = submodules/python-lib
+	url = git@github.com:daggerml/python-lib/
+[submodule "submodules/daggerml-cli"]
+	path = submodules/daggerml-cli
+	url = git@github.com:daggerml/daggerml-cli/

@@ -1,5 +1,5 @@
 FROM python:3.12
 
-RUN pip install daggerml daggerml-cli
+COPY . /dml-lib/
 
-CMD ["python"]
+RUN pip3 install --no-cache-dir /dml-lib/ ./dml-lib/submodules/python-lib/ ./dml-lib/submodules/daggerml-cli/

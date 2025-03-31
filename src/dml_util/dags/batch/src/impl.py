@@ -1,4 +1,5 @@
 # TODO:  should install dml-util and use it directly
+import json
 import logging
 import os
 from textwrap import dedent
@@ -69,6 +70,7 @@ class Batch(LambdaRunner):
         if len(response) == 0:
             return None, None
         job = response["jobs"][0]
+        self.job_desc = job
         status = job["status"]
         return job_id, status
 
@@ -81,7 +83,14 @@ class Batch(LambdaRunner):
         job_id, status = self.describe_job(state)
         if status in [SUCCESS_STATE, FAILED_STATE, None]:
             if not self.s3.exists("output.dump"):
-                raise DagExecError(f"{job_id = } : no output")
+                msg = json.dumps(
+                    {
+                        "job_id": job_id,
+                        "message": "finished without writing output",
+                        "status_reason": self.job["statusReason"],
+                    }
+                )
+                raise DagExecError(msg)
             dump = self.s3.get("output.dump")
         msg = f"{job_id = } {status}"
         return state, msg, {"dump": dump}

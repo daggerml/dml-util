@@ -9,8 +9,6 @@ from time import time
 
 from daggerml import Dml, Resource
 
-from dml_util.executor import CFN_EXEC
-
 _here_ = Path(__file__).parent
 
 
@@ -42,7 +40,7 @@ def main():
         dag.params = params
         dag.adapter = adapter
         dag.output_name = output_name
-        dag.cfn_fn = CFN_EXEC
+        dag.cfn_fn = Resource("cfn", adapter="dml-util-local-adapter")
         dag.stack = dag.cfn_fn(
             f"dml-{args.name}",
             dag.tpl,

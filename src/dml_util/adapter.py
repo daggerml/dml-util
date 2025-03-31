@@ -4,28 +4,41 @@ import os
 import shlex
 import subprocess
 import sys
+from argparse import ArgumentParser
 from contextlib import contextmanager
 from dataclasses import dataclass
-from time import time
+from tempfile import TemporaryDirectory
+from textwrap import dedent
+from time import sleep
+from urllib.parse import urlparse
 
 import boto3
 from botocore.exceptions import ClientError
 from daggerml import Dml, Resource
 
-from dml_util.baseutil import (
-    DagExecError,
-    LocalState,
-    Runner,
-    S3Store,
-    WithDataError,
-    get_client,
-)
+from dml_util.baseutil import Runner, S3Store, WithDataError, get_client
 
 logger = logging.getLogger(__name__)
 
 
-def log(*x):
-    print(*x, file=sys.stderr)
+def _read_data(file):
+    if not isinstance(file, str):
+        return file.read()
+    if urlparse(file).scheme == "s3":
+        return S3Store().get(file).decode()
+    with open(file) as f:
+        data = f.read()
+        print(f"Filepath: {file} ------ {data = }", file=sys.stderr)
+        return data.strip()
+
+
+def _write_data(data, to):
+    if not isinstance(to, str):
+        return print(data, file=to)
+    if urlparse(to).scheme == "s3":
+        return S3Store().put(data.encode(), name=to)
+    with open(to, "w") as f:
+        f.write(data)
 
 
 @dataclass
@@ -35,20 +48,31 @@ class Adapter:
 
     @classmethod
     def cli(cls):
-        try:
-            response, msg = cls.send_to_remote(sys.argv[1], sys.stdin)
-        except WithDataError as e:
-            log(e)
-            sys.exit(1)
-        log(msg)
-        print(json.dumps(response))
+        parser = ArgumentParser()
+        parser.add_argument("uri")
+        parser.add_argument("-i", "--input", default=sys.stdin)
+        parser.add_argument("-o", "--output", default=sys.stdout)
+        parser.add_argument("-e", "--error", default=sys.stderr)
+        parser.add_argument("-d", "--daemon", action="store_true")
+        args = parser.parse_args()
+        input = _read_data(args.input)
+        while True:
+            try:
+                resp, msg = cls.send_to_remote(args.uri, input)
+                _write_data(msg, args.error)
+                if resp.get("dump"):
+                    _write_data(json.dumps(resp), args.output)
+                    sys.exit(0)
+            except Exception as e:
+                _write_data(str(WithDataError.from_ex(e)), args.error)  # to get the stacktrace
+                sys.exit(1)
+            if args.daemon:
+                sleep(0.1)
+            else:
+                sys.exit(0)
 
     @classmethod
-    def funkify(cls, uri, data=None):
-        if isinstance(uri, Resource):
-            data = (data or {}).copy()
-            data.update(uri.data or {})
-            return Resource(uri, data, adapter=uri.adapter)
+    def funkify(cls, uri, data):
         return Resource(uri, data=data, adapter=cls.ADAPTER)
 
     @classmethod
@@ -67,7 +91,7 @@ class Lambda(Adapter):
             FunctionName=uri,
             InvocationType="RequestResponse",
             LogType="Tail",
-            Payload=data.read().strip().encode(),
+            Payload=data.strip().encode(),
         )
         payload = json.loads(response["Payload"].read())
         if payload.get("status", 400) // 100 in [4, 5]:
@@ -82,19 +106,21 @@ class Local(Adapter):
     RUNNERS = {}
 
     @classmethod
-    def send_to_remote(cls, uri, data):
-        runner = cls.RUNNERS[uri](**json.load(data))
-        return runner.run()
-
-    @classmethod
     def funkify(cls, uri, data):
-        data = cls.RUNNERS[uri].funkify(data)
+        data = cls.RUNNERS[uri].funkify(**data)
+        if isinstance(data, tuple):
+            uri, data = data
         return super().funkify(uri, data)
 
     @classmethod
     def register(cls, def_cls):
         cls.RUNNERS[def_cls.__name__.lower()] = def_cls
         return def_cls
+
+    @classmethod
+    def send_to_remote(cls, uri, data):
+        runner = cls.RUNNERS[uri](**json.loads(data))
+        return runner.run()
 
 
 def _run_cli(command, **kw):
@@ -107,21 +133,18 @@ def _run_cli(command, **kw):
     )
     if result.returncode != 0:
         msg = f"{command}\n{result.returncode = }\n{result.stdout}\n\n{result.stderr}"
-        raise DagExecError(msg)
+        raise RuntimeError(msg)
     return result.stdout.strip()
 
 
-class LocalRunner(Runner):
-    state_class = LocalState
-
+@Local.register
+class Script(Runner):
     @classmethod
-    def funkify(cls, data):
-        raise NotImplementedError(f"{cls.__name__}.funkify is not defined")
+    def funkify(cls, script, cmd=("python3",)):
+        return {"script": script, "cmd": list(cmd)}
 
-
-class ScriptRunner(LocalRunner):
     def to_cmd(self, filepath):
-        raise NotImplementedError(f"{self.__class__.__name__}.to_cmd not defined")
+        return [*self.kwargs["cmd"], filepath]
 
     def submit(self):
         tmpd = _run_cli("mktemp -d -t dml.XXXXXX".split())
@@ -166,12 +189,18 @@ class ScriptRunner(LocalRunner):
         tmpd = state["tmpd"]
         if proc_exists(pid):
             return state, f"{pid = } running", {}
-        s3 = S3Store()
-        logs = {k: f"{tmpd}/{k}" for k in ["stdout", "stderr"]}
-        logs = {k: s3.put(filepath=v, suffix=".log").uri for k, v in logs.items() if os.path.isfile(v)}
         if os.path.isfile(f"{tmpd}/output.dump"):
             with open(f"{tmpd}/output.dump") as f:
-                return state, f"{pid = } finished", {"dump": f.read(), "logs": logs}
+                dump = f.read()
+            s3 = S3Store()
+            resp = {"dump": dump}
+            try:  # FIXME: logging is kinda messed up... fix it.
+                logs = {k: f"{tmpd}/{k}" for k in ["stdout", "stderr"]}
+                logs = {k: s3.put(filepath=v, suffix=".log").uri for k, v in logs.items() if os.path.isfile(v)}
+                resp["logs"] = logs
+            except Exception:
+                pass
+            return state, f"{pid = } finished", resp
         msg = f"{pid = } finished without writing output"
         if os.path.exists(f"{tmpd}/stderr"):
             with open(f"{tmpd}/stderr", "r") as f:
@@ -188,110 +217,167 @@ class ScriptRunner(LocalRunner):
 
 
 @Local.register
-class Python(ScriptRunner):
+class Wrapped(Runner):
     @classmethod
-    def funkify(cls, data):
-        if "path" not in data:
-            data["path"] = sys.executable
-        return data
+    def funkify(cls, script, sub):
+        kw = {"script": script, "sub": sub}
+        return kw
 
-    def to_cmd(self, filepath):
-        return [self.kwargs["path"], filepath]
+    def run(self):
+        sub_uri, sub_kwargs, sub_adapter = self._to_data()
+        with TemporaryDirectory() as tmpd:
+            with open(f"{tmpd}/script", "w") as f:
+                f.write(self.kwargs["script"])
+            subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
+            cmd = [f"{tmpd}/script", sub_adapter, sub_uri]
+            result = subprocess.run(
+                cmd,
+                input=sub_kwargs,
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+        if result.returncode != 0:
+            msg = "\n".join(
+                [
+                    str(cmd),
+                    f"{result.returncode = }",
+                    "",
+                    "STDOUT:",
+                    result.stdout,
+                    "",
+                    "=" * 10,
+                    "STDERR:",
+                    result.stderr,
+                ]
+            )
+            raise RuntimeError(msg)
+        stdout = json.loads(result.stdout or "{}")
+        return stdout, result.stderr
 
 
 @Local.register
-class Hatch(ScriptRunner):
+class Hatch(Wrapped):
     @classmethod
-    def funkify(cls, data):
-        if "env" not in data:
-            data["env"] = "default"
-        return data
-
-    def to_cmd(self, filepath):
-        env = self.kwargs["env"]
-        return ["hatch", "-e", env, "run", filepath]
+    def funkify(cls, name, sub, path=None):
+        script = "#!/bin/bash\n\n"
+        if path is not None:
+            script += f"cd {shlex.quote(path)}\n"
+        script += f"hatch -e {name} run $1 $2"
+        return super().funkify(script, sub)
 
 
 @Local.register
-class Conda(ScriptRunner):
+class Docker(Runner):
     @classmethod
-    def funkify(cls, data):
-        assert "env" in data
-        return data
-
-    def to_cmd(self, filepath):
-        env = self.kwargs["env"]
-        return ["conda", "run", "-n", env, filepath]
-
-
-@Local.register
-class Ssh(LocalRunner):
-    @classmethod
-    def funkify(cls, data):
-        user = data.pop("user")
-        if user is not None:
-            data["host"] = f"{user}@{data['host']}"
-        data["flags"] = ["-o", "BatchMode=yes", *data.get("flags", [])]
-        return data
-
-    def _run_cli(self, command, **kw):
-        return _run_cli(["ssh", *self.kwargs["flags"], self.kwargs["host"], command], **kw)
+    def funkify(cls, image, sub, flags=None):
+        return {
+            "sub": sub,
+            "image": image,
+            "flags": flags or [],
+        }
 
     def submit(self):
-        xtbl = self.kwargs["executable"]
-        path_dir = self.kwargs["path_dir"]
-        tmpd = self._run_cli("mktemp -d -t dml.XXXXXX")
-        self._run_cli(f"cat > {tmpd}/script", input=self.kwargs["script"])
-        self._run_cli(f"chmod +x {tmpd}/script")
-        self._run_cli(f"cat > {tmpd}/input.dump", input=self.dump)
+        session = boto3.Session()
+        creds = session.get_credentials()
+        sub_uri, sub_kwargs, sub_adapter = self._to_data()
+        tmpd = _run_cli("mktemp -d -t dml.XXXXXX".split())
+        with open(f"{tmpd}/stdin.dump", "w") as f:
+            f.write(sub_kwargs)
         env = {
-            "DML_INPUT_LOC": f"{tmpd}/input.dump",
-            "DML_OUTPUT_LOC": f"{tmpd}/output.dump",
-            "DML_REPO_DIR": "/dev/null",
+            "AWS_ACCESS_KEY_ID": creds.access_key,
+            "AWS_SECRET_ACCESS_KEY": creds.secret_key,
             **self.env,
         }
-        bash_script = "#!/bin/bash\n\n"
-        bash_script += f"dml_path={shlex.quote(path_dir)}\n"
-        for k, v in env.items():
-            bash_script = f"{bash_script}export {k}={shlex.quote(v)}\n"
-        bash_script += 'export PATH="$dml_path:$PATH"\n'
-        bash_script += f"\nnohup {xtbl!r} {tmpd}/script &> {tmpd}/stdouterr & echo $!"
-        self._run_cli(f"cat > {tmpd}/script.sh", input=bash_script)
-        pid = self._run_cli("/bin/bash", input=bash_script)
-        return {"pid": pid, "tmpd": tmpd, "submitted": time()}
+        env_flags = [("-e", f"{k}={v}") for k, v in env.items()]
+        container_id = _run_cli(
+            [
+                "docker",
+                "run",
+                "-v",
+                f"{tmpd}:/opt/dml",
+                *[y for x in env_flags for y in x],
+                "-d",  # detached
+                # "-i",
+                *self.kwargs.get("flags", []),
+                "--entrypoint",
+                sub_adapter,
+                self.kwargs["image"]["uri"],
+                # "-h",
+                "-d",
+                "-i",
+                "/opt/dml/stdin.dump",
+                "-o",
+                "/opt/dml/stdout.dump",
+                "-e",
+                "/opt/dml/stderr.dump",
+                sub_uri,
+            ],
+            # input=sub_kwargs,
+        )
+        return container_id, tmpd
 
     def update(self, state):
-        pid = state.get("pid")
-        if pid is None:
-            state = self.submit()
-            return state, f"job {state} started", {}
-        status = "running"
-        t0 = state["submitted"]
-        response = {}
-        if str(pid) not in self._run_cli(f"ps -p {pid} || echo no"):
-            status = "finished"
-            tmpd = state["tmpd"]
-            response["dump"] = self._run_cli(f"cat {tmpd}/output.dump || echo") or None
-            if response["dump"] is None:
-                response.pop("dump")
-                msg = self._run_cli(f"cat {tmpd}/stdouterr")
-                msg = f"{msg}\n\ntemp files in {tmpd} on {self.kwargs['host']}"
-                raise DagExecError(msg)
-        return state, f"[{pid} @ {int(time() - t0):1.2E} seconds]:{status}", response
+        cid = state.get("cid")
+        if cid is None:
+            cid, tmpd = self.submit()
+            return {"cid": cid, "tmpd": tmpd}, f"container {cid} started", {}
+        tmpd = state["tmpd"]
+        try:
+            status = _run_cli(["docker", "inspect", "-f", "{{.State.Status}}", cid])
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            status = "no-longer-exists"
+        if status in ["created", "running"]:
+            return state, f"container {cid} running", {}
+        # response["logs"] = {"combined": S3Store().put(_run_cli(["docker", "logs", cid]).encode(), suffix=".log").uri}
+        # raise ValueError("ahhhhhhhh %r" % (state,))
+        sleep(0.1)
+        msg = f"container {cid} finished with status {status!r}"
+        error_str = ""
+        if not os.path.exists(tmpd):
+            msg += "   --- TMPD DOES NOT EXIST!!!"
+        if os.path.exists(f"{tmpd}/stderr.dump"):
+            with open(f"{tmpd}/stderr.dump") as f:
+                error_str = f.read()
+        result = {}
+        if os.path.exists(f"{tmpd}/stdout.dump"):
+            with open(f"{tmpd}/stdout.dump") as f:
+                result = json.loads(f.read() or '{"wtf":23}')
+        if status in ["exited"] and result:
+            return state, msg, result
+        # raise RuntimeError(msg)
+        dkr_logs = _run_cli(["docker", "logs", cid])
+        exit_code = int(_run_cli(["docker", "inspect", "-f", "{{.State.ExitCode}}", cid]))
+        msg = dedent(
+            f"""
+            job {self.cache_key}
+              {msg}
+              exit code {exit_code}
+              No output written
+              Logs:
+                {dkr_logs}
+              STDERR:
+                {error_str}
+            ================
+            """
+        ).strip()
+        raise RuntimeError(msg)
 
     def delete(self, state):
-        if "pid" in state:
-            self._run_cli(f"kill -9 {state['pid']} || echo")
+        if "cid" in state:
+            _run_cli(["docker", "rm", state["cid"]])
         if "tmpd" in state:
             command = "rm -r {} || echo".format(shlex.quote(state["tmpd"]))
-            self._run_cli(command)
+            _run_cli(command, shell=True)
         super().delete(state)
 
 
 @Local.register
-class Docker(LocalRunner):
+class Docker_(Runner):
     @classmethod
-    def funkify(cls, data):
+    def funkify(cls, **data):
         return data
 
     def _run_command(self, command):
@@ -308,7 +394,7 @@ class Docker(LocalRunner):
         subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
         with open(f"{tmpd}/input.dump", "w") as f:
             f.write(self.dump)
-        env_flags = [("-e", f"{k}={v!r}") for k, v in self.env.items()]
+        env_flags = [("-e", f"{k}={v}") for k, v in self.env.items()]
         env_flags = [y for x in env_flags for y in x]
         exit_code, container_id = self._run_command(
             [
@@ -323,7 +409,7 @@ class Docker(LocalRunner):
                 *env_flags,
                 "-d",  # detached
                 *self.kwargs.get("flags", []),
-                self.kwargs["image"],
+                self.kwargs["image"]["uri"],
                 "/opt/dml/script",
             ],
         )
@@ -377,9 +463,9 @@ class Docker(LocalRunner):
 
 
 @Local.register
-class Cfn(LocalRunner):
+class Cfn(Runner):
     @classmethod
-    def funkify(cls, data):
+    def funkify(cls, **data):
         return data
 
     def fmt(self, stack_id, status, raw_status):
@@ -460,12 +546,33 @@ class Cfn(LocalRunner):
                             dag[k] = v
                         dag.stack_id = state["StackId"]
                         dag.stack_name = state["name"]
-                        dag.result = state["outputs"]
+                        dag.outputs = state["outputs"]
+                        dag.result = dag.outputs
             except KeyboardInterrupt:
                 raise
             except Exception:
                 pass
+            state.clear()
         return state, msg, result
+
+
+@Local.register
+class Test(Runner):
+    @classmethod
+    def funkify(cls, **kw):
+        return kw
+
+    def run(self):
+        outdump = None
+
+        def handler(dump):
+            nonlocal outdump
+            outdump = dump
+
+        with Dml() as dml:
+            with dml.new(data=self.dump, message_handler=handler) as dag:
+                dag.result = dag.argv
+        return {"dump": outdump}, "finished local testing stuff?!"
 
 
 @contextmanager

@@ -100,15 +100,6 @@ def get_client(name):
     return boto3.client(name, config=config)
 
 
-class DagExecError(Exception):
-    @classmethod
-    def from_ex(cls, e):
-        if isinstance(e, DagExecError):
-            return e
-        msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
-        return cls(msg)
-
-
 class WithDataError(Exception):
     def __init__(self, message, response=None):
         super().__init__(message)
@@ -400,7 +391,7 @@ class Runner:
     dump: str
     retry: bool  # TODO: executor caching
     state: State = field(init=False)
-    state_class = DynamoState
+    state_class = LocalState
 
     def __post_init__(self):
         meta_kwargs = (self.kwargs or {}).get("dml_meta", {})
@@ -416,33 +407,47 @@ class Runner:
             "DML_WRITE_LOC": f"s3://{bucket}/{self.prefix}/data/{self.cache_key}",
         }
 
+    def _to_data(self):
+        sub = self.kwargs["sub"]
+        ks = {
+            "cache_key": self.cache_key,
+            "kwargs": sub["data"],
+            "dump": self.dump,
+            "retry": self.retry,
+        }
+        return sub["uri"], json.dumps(ks), sub["adapter"]
+
     def _fmt(self, msg):
         return f"{self.__class__.__name__} [{self.cache_key}] :: {msg}"
 
-    def put_state(self, state, delete=False):
-        if delete and not os.getenv("DML_KEEP_STATE"):
-            self.delete(state)
-            self.state.delete()
-        else:
-            self.state.put(state)
+    def put_state(self, state):
+        self.state.put(state)
 
     def run(self):
         state = self.state.get()
+        delete = False
         if state is None:
             return {}, self._fmt("Could not acquire job lock")
         try:
             logger.info("getting info from %r", self.state_class.__name__)
             state, msg, response = self.update(state)
-            self.put_state(state, bool(response))
+            if response.get("dump") is None:
+                self.put_state(state)
+            else:
+                delete = True
             return response, self._fmt(msg)
         except Exception as e:
-            if isinstance(e, (WithDataError, DagExecError)):
-                self.put_state(state, True)
             if isinstance(e, WithDataError):
-                return e.response, str(e)
-            raise DagExecError.from_ex(e) from None
+                self.put_state(state)
+            else:
+                delete = True
+            raise
         finally:
-            self.state.unlock()
+            if delete:
+                self.delete(state)
+                self.state.delete()
+            else:
+                self.state.unlock()
 
     def delete(self, state):
         pass
@@ -465,7 +470,7 @@ class LambdaRunner(Runner):
             response, msg = cls(**event).run()
             status = 200 if response else 201
             return {"status": status, "response": response, "message": msg}
-        except DagExecError as e:
+        except Exception as e:
             return {"status": 400, "response": None, "message": str(e)}
 
     def delete(self, state):

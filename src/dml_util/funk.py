@@ -3,6 +3,8 @@ from functools import partial
 from inspect import getsource
 from textwrap import dedent
 
+from daggerml import Resource
+
 from dml_util.adapter import Adapter
 
 
@@ -67,7 +69,7 @@ def _fnk(fn, extra_fns, extra_lines):
 
 def funkify(
     fn=None,
-    uri="python",
+    uri="script",
     data=None,
     adapter="local",
     extra_fns=(),
@@ -85,9 +87,12 @@ def funkify(
     adapter_ = Adapter.ADAPTERS.get(adapter)
     if adapter_ is None:
         raise ValueError(f"Adapter: {adapter!r} does not exist")
-    src = _fnk(fn, extra_fns, extra_lines)
-    resource = adapter_.funkify(uri, data={"script": src, **(data or {})})
-    object.__setattr__(resource, "fn", fn)
+    if isinstance(fn, Resource):
+        resource = adapter_.funkify(uri, data={"sub": fn, **(data or {})})
+    else:
+        src = _fnk(fn, extra_fns, extra_lines)
+        resource = adapter_.funkify(uri, data={"script": src, **(data or {})})
+        object.__setattr__(resource, "fn", fn)
     return resource
 
 
