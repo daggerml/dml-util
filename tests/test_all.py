@@ -151,7 +151,9 @@ class TestFunks(AwsTestCase):
                             "--platform",
                             "linux/amd64",
                             "-e",
-                            f"AWS_ENDPOINT_URL={self.endpoint}",
+                            f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
+                            "-p",
+                            f"{self.moto_port}:{self.moto_port}",
                         ],
                     },
                     adapter="local",
@@ -160,9 +162,11 @@ class TestFunks(AwsTestCase):
                 assert dag.baz.value() == sum(vals)
                 dag2 = dml.load(dag.baz)
                 assert dag2.result is not None
-            # dag2 = dml("dag", "describe", dag2._ref.to.split("/")[-1])
-            # logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
-            # assert logs == {"stdout/stderr": "testing stdout...\ntesting stderr..."}
+            dag2 = dml("dag", "describe", dag2._ref.to.split("/")[-1])
+            logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
+            self.assertCountEqual(logs.keys(), ["stdout", "stderr", "docker/combined"])
+            assert logs["stdout"] == "testing stdout..."
+            assert logs["stderr"] == "testing stderr..."
 
     def test_notebooks(self):
         s3 = S3Store()

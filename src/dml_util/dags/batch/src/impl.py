@@ -2,9 +2,8 @@
 import json
 import logging
 import os
-from textwrap import dedent
 
-from baseutil import DagExecError, LambdaRunner, get_client
+from baseutil import LambdaRunner, get_client
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
@@ -21,8 +20,8 @@ class Batch(LambdaRunner):
     client = get_client("batch")
 
     def submit(self):
+        sub_uri, sub_kwargs, sub_adapter = self._to_data()
         image = self.kwargs.pop("image")
-        script = self.kwargs.pop("script")
         container_props = DFLT_PROP
         container_props.update(self.kwargs)
         needs_gpu = any(x["type"] == "GPU" for x in container_props.get("resourceRequirements", []))
@@ -33,19 +32,15 @@ class Batch(LambdaRunner):
             containerProperties={
                 "image": image,
                 "command": [
-                    "python3",
-                    "-c",
-                    dedent(script).strip(),
+                    sub_adapter,
+                    "-i",
+                    self.s3.put(self.dump.encode(), name="input.dump"),
+                    "-o",
+                    self.s3.name2uri("output.dump"),
+                    "-e",
+                    self.s3.name2uri("error.dump"),
                 ],
                 "environment": [
-                    {
-                        "name": "DML_INPUT_LOC",
-                        "value": self.s3.put(self.dump.encode(), name="input.dump"),
-                    },
-                    {
-                        "name": "DML_OUTPUT_LOC",
-                        "value": self.s3.name2uri("output.dump"),
-                    },
                     *[{"name": k, "value": v} for k, v in self.env.items()],
                 ],
                 "jobRoleArn": os.environ["BATCH_TASK_ROLE_ARN"],
@@ -79,7 +74,7 @@ class Batch(LambdaRunner):
             state = self.submit()
             job_id = state["job_id"]
             return state, f"{job_id = } submitted", {}
-        dump = None
+        dump = {}
         job_id, status = self.describe_job(state)
         if status in [SUCCESS_STATE, FAILED_STATE, None]:
             if not self.s3.exists("output.dump"):
@@ -90,10 +85,10 @@ class Batch(LambdaRunner):
                         "status_reason": self.job["statusReason"],
                     }
                 )
-                raise DagExecError(msg)
+                raise RuntimeError(msg)
             dump = self.s3.get("output.dump")
         msg = f"{job_id = } {status}"
-        return state, msg, {"dump": dump}
+        return state, msg, dump
 
     def gc(self, state):
         job_id, status = self.describe_job(state)

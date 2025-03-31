@@ -298,12 +298,10 @@ class Docker(Runner):
                 f"{tmpd}:/opt/dml",
                 *[y for x in env_flags for y in x],
                 "-d",  # detached
-                # "-i",
                 *self.kwargs.get("flags", []),
                 "--entrypoint",
                 sub_adapter,
                 self.kwargs["image"]["uri"],
-                # "-h",
                 "-d",
                 "-i",
                 "/opt/dml/stdin.dump",
@@ -313,7 +311,6 @@ class Docker(Runner):
                 "/opt/dml/stderr.dump",
                 sub_uri,
             ],
-            # input=sub_kwargs,
         )
         return container_id, tmpd
 
@@ -331,24 +328,22 @@ class Docker(Runner):
             status = "no-longer-exists"
         if status in ["created", "running"]:
             return state, f"container {cid} running", {}
-        # response["logs"] = {"combined": S3Store().put(_run_cli(["docker", "logs", cid]).encode(), suffix=".log").uri}
-        # raise ValueError("ahhhhhhhh %r" % (state,))
-        sleep(0.1)
         msg = f"container {cid} finished with status {status!r}"
         error_str = ""
-        if not os.path.exists(tmpd):
-            msg += "   --- TMPD DOES NOT EXIST!!!"
         if os.path.exists(f"{tmpd}/stderr.dump"):
             with open(f"{tmpd}/stderr.dump") as f:
                 error_str = f.read()
         result = {}
         if os.path.exists(f"{tmpd}/stdout.dump"):
             with open(f"{tmpd}/stdout.dump") as f:
-                result = json.loads(f.read() or '{"wtf":23}')
-        if status in ["exited"] and result:
-            return state, msg, result
-        # raise RuntimeError(msg)
+                result = json.loads(f.read())
         dkr_logs = _run_cli(["docker", "logs", cid])
+        if status in ["exited"] and result:
+            result["logs"] = {
+                "docker/combined": S3Store().put(dkr_logs.encode(), suffix=".log").uri,
+                **result.get("logs", {}),
+            }
+            return state, msg, result
         exit_code = int(_run_cli(["docker", "inspect", "-f", "{{.State.ExitCode}}", cid]))
         msg = dedent(
             f"""
@@ -372,94 +367,6 @@ class Docker(Runner):
             command = "rm -r {} || echo".format(shlex.quote(state["tmpd"]))
             _run_cli(command, shell=True)
         super().delete(state)
-
-
-@Local.register
-class Docker_(Runner):
-    @classmethod
-    def funkify(cls, **data):
-        return data
-
-    def _run_command(self, command):
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, check=False)
-            return result.returncode, (result.stdout + result.stderr).strip()
-        except subprocess.SubprocessError as e:
-            return 1, str(e)
-
-    def submit(self):
-        tmpd = _run_cli("mktemp -d -t dml.XXXXXX".split())
-        with open(f"{tmpd}/script", "w") as f:
-            f.write(self.kwargs["script"])
-        subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
-        with open(f"{tmpd}/input.dump", "w") as f:
-            f.write(self.dump)
-        env_flags = [("-e", f"{k}={v}") for k, v in self.env.items()]
-        env_flags = [y for x in env_flags for y in x]
-        exit_code, container_id = self._run_command(
-            [
-                "docker",
-                "run",
-                "-v",
-                f"{tmpd}:/opt/dml",
-                "-e",
-                "DML_INPUT_LOC=/opt/dml/input.dump",
-                "-e",
-                "DML_OUTPUT_LOC=/opt/dml/output.dump",
-                *env_flags,
-                "-d",  # detached
-                *self.kwargs.get("flags", []),
-                self.kwargs["image"]["uri"],
-                "/opt/dml/script",
-            ],
-        )
-        if exit_code != 0:
-            msg = f"container {container_id} failed to start"
-            raise RuntimeError(msg)
-        return container_id, tmpd
-
-    def maybe_complete(self, tmpd, cid, status="???"):
-        try:
-            if os.path.exists(f"{tmpd}/output.dump"):
-                s3 = S3Store()
-                _, stdout = self._run_command(["docker", "logs", cid])
-                with open(f"{tmpd}/output.dump") as f:
-                    return {
-                        "logs": {"stdout/stderr": s3.put(stdout.encode(), suffix=".log").uri},
-                        "dump": f.read(),
-                    }
-            _, exit_code_str = self._run_command(["docker", "inspect", "-f", "{{.State.ExitCode}}", cid])
-            _, logs = self._run_command(["docker", "logs", cid])
-            exit_code = int(exit_code_str)
-            msg = f"""
-            job {self.cache_key}
-              finished with status {status}
-              exit code {exit_code}
-              No output written
-              Logs:
-                {logs}
-            """.strip()
-            raise RuntimeError(msg)
-        finally:
-            if os.getenv("DML_DOCKER_CLEANUP") == "1":
-                self._run_command(["docker", "rm", cid])
-
-    def update(self, state):
-        cid = state.get("cid")
-        response = {}
-        if cid is None:
-            cid, tmpd = self.submit()
-            return {"cid": cid, "tmpd": tmpd}, f"container {cid} started", response
-        # Check if container exists and get its status
-        tmpd = state["tmpd"]
-        exit_code, status = self._run_command(["docker", "inspect", "-f", "{{.State.Status}}", cid])
-        status = status if exit_code == 0 else "no-longer-exists"
-        if status in ["created", "running", "restarting"]:
-            return state, f"container {cid} running", response
-        elif status in ["exited", "paused", "dead", "no-longer-exists"]:
-            msg = f"container {cid} finished with status {status!r}"
-            response = self.maybe_complete(tmpd, cid, status)
-            return state, msg, response
 
 
 @Local.register
