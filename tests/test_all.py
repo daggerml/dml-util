@@ -149,6 +149,7 @@ class TestFunks(AwsTestCase):
                     assert d0.result.value() == "2.2.3"
 
     @skipIf(docker is None, "docker not available")
+    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions interacts with docker strangely")
     def test_docker_build(self):
         from dml_util import dkr_build, funkify
 
