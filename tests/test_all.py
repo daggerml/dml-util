@@ -161,6 +161,25 @@ class TestFunks(AwsTestCase):
             print("testing stderr...", file=sys.stderr)
             dag.result = sum(dag.argv[1:].value())
 
+        flags = [
+            "--platform",
+            "linux/amd64",
+            "-e",
+            f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
+            "-p",
+            f"{self.moto_port}:{self.moto_port}",
+        ]
+        host_ip = subprocess.run(
+            "ip route | awk '/default/ {print $3}'",
+            shell=True,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.strip()
+        if host_ip:
+            print(f"{host_ip = !r}")
+            flags.append(f"--add-host=host.docker.internal:{host_ip}")
+
         s3 = S3Store()
         vals = [1, 2, 3]
         with Dml() as dml:
@@ -182,17 +201,7 @@ class TestFunks(AwsTestCase):
                 dag.fn = funkify(
                     fn0,
                     "docker",
-                    {
-                        "image": dag.img.value(),
-                        "flags": [
-                            "--platform",
-                            "linux/amd64",
-                            "-e",
-                            f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
-                            "-p",
-                            f"{self.moto_port}:{self.moto_port}",
-                        ],
-                    },
+                    {"image": dag.img.value(), "flags": flags},
                     adapter="local",
                 )
                 dag.baz = dag.fn(*vals)
