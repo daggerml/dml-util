@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from argparse import ArgumentParser
 from pprint import pformat
 
 from daggerml import Dml, Resource
@@ -184,8 +185,7 @@ def node_page(repo, branch, dag_id, node_id):
 
 
 def run():
-    app.run(debug=True)
-
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    parser = ArgumentParser()
+    parser.add_argument("-p", "--port", type=int, default=5000)
+    args = parser.parse_args()
+    app.run(debug=True, port=args.port)

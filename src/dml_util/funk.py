@@ -84,15 +84,21 @@ def funkify(
             extra_fns=extra_fns,
             extra_lines=extra_lines,
         )
+    if isinstance(adapter, Resource):
+        return Resource(adapter.uri, data={"sub": fn, **(data or {})}, adapter=adapter.adapter)
     adapter_ = Adapter.ADAPTERS.get(adapter)
     if adapter_ is None:
         raise ValueError(f"Adapter: {adapter!r} does not exist")
+    data = data or {}
     if isinstance(fn, Resource):
-        resource = adapter_.funkify(uri, data={"sub": fn, **(data or {})})
+        data = {"sub": fn, **data}
+    elif isinstance(fn, str):
+        data = {"script": fn, **data}
     else:
         src = _fnk(fn, extra_fns, extra_lines)
-        resource = adapter_.funkify(uri, data={"script": src, **(data or {})})
-        object.__setattr__(resource, "fn", fn)
+        data = {"script": src, **data}
+    resource = adapter_.funkify(uri, data=data)
+    object.__setattr__(resource, "fn", fn)
     return resource
 
 

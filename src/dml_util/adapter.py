@@ -36,7 +36,7 @@ def _write_data(data, to):
     if not isinstance(to, str):
         return print(data, file=to)
     if urlparse(to).scheme == "s3":
-        return S3Store().put(data.encode(), name=to)
+        return S3Store().put(data.encode(), uri=to)
     with open(to, "w") as f:
         f.write(data)
 
@@ -143,14 +143,10 @@ class Script(Runner):
     def funkify(cls, script, cmd=("python3",)):
         return {"script": script, "cmd": list(cmd)}
 
-    def to_cmd(self, filepath):
-        return [*self.kwargs["cmd"], filepath]
-
     def submit(self):
         tmpd = _run_cli("mktemp -d -t dml.XXXXXX".split())
         with open(f"{tmpd}/script", "w") as f:
             f.write(self.kwargs["script"])
-        subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
         with open(f"{tmpd}/input.dump", "w") as f:
             f.write(self.dump)
         env = dict(os.environ).copy()
@@ -162,7 +158,7 @@ class Script(Runner):
             }
         )
         proc = subprocess.Popen(
-            self.to_cmd(f"{tmpd}/script"),
+            [*self.kwargs["cmd"], f"{tmpd}/script"],
             stdout=open(f"{tmpd}/stdout", "w"),
             stderr=open(f"{tmpd}/stderr", "w"),
             start_new_session=True,
@@ -299,9 +295,8 @@ class Docker(Runner):
                 *[y for x in env_flags for y in x],
                 "-d",  # detached
                 *self.kwargs.get("flags", []),
-                "--entrypoint",
-                sub_adapter,
                 self.kwargs["image"]["uri"],
+                sub_adapter,
                 "-d",
                 "-i",
                 "/opt/dml/stdin.dump",

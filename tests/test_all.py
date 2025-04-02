@@ -16,7 +16,7 @@ from daggerml import Dml, Resource
 from daggerml.core import Error
 
 from dml_util import S3Store, funk, funkify
-from dml_util.baseutil import S3_BUCKET
+from dml_util.baseutil import S3_BUCKET, S3_PREFIX
 from tests.test_baseutil import AwsTestCase
 
 try:
@@ -39,6 +39,14 @@ class TestFunks(AwsTestCase):
         s3 = S3Store()
         s3.rm(*s3.ls(recursive=True))
         super().tearDown()
+
+    def test_s3_uri(self):
+        s3 = S3Store()
+        raw = b"foo bar baz"
+        resp = s3.put(raw, name="foo.txt")
+        assert resp.uri == f"s3://{S3_BUCKET}/{S3_PREFIX}/data/foo.txt"
+        resp = s3.put(raw, uri=f"s3://{S3_BUCKET}/asdf/foo.txt")
+        assert resp.uri == f"s3://{S3_BUCKET}/asdf/foo.txt"
 
     def test_funkify(self):
         def fn(*args):
@@ -66,6 +74,35 @@ class TestFunks(AwsTestCase):
                 assert d0.n1.value() == sum(vals)
                 dag = dml.load(d0.n1)
                 assert dag.result is not None
+            dag = dml("dag", "describe", dag._ref.to.split("/")[-1])
+            logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
+            assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
+
+    def test_funkify_string(self):
+        s3 = S3Store()
+        with Dml() as dml:
+            vals = [1, 2, 3]
+            with dml.new("d0", "d0") as dag:
+                dag.f0 = funkify(
+                    dedent(
+                        """
+                    import sys
+                    print("testing stdout...")
+                    print("testing stderr...", file=sys.stderr)
+
+                    from dml_util.adapter import aws_fndag
+
+                    if __name__ == "__main__":
+                        with aws_fndag() as dag:
+                            dag.n0 = sum(dag.argv[1:].value())
+                            dag.result = dag.n0
+                        """
+                    ).strip(),
+                )
+                dag.n0 = dag.f0(*vals)
+                assert dag.n0.value() == sum(vals)
+                dag.result = dag.n0
+            dag = dml.load(dag.n0)
             dag = dml("dag", "describe", dag._ref.to.split("/")[-1])
             logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
             assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}

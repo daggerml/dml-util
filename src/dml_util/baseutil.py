@@ -198,16 +198,19 @@ class S3Store:
         resp = self.client.get_object(Bucket=bucket, Key=key)
         return resp["Body"].read()
 
-    def put(self, data=None, filepath=None, name=None, suffix=None):
+    def put(self, data=None, filepath=None, name=None, uri=None, suffix=None):
         exactly_one(data=data, filepath=filepath)
+        exactly_one(name=name, uri=uri, suffix=suffix)
         # TODO: look for registered serdes through python packaging
         data = open(filepath, "rb") if data is None else BytesIO(data)
         try:
-            if name is None:
-                name = compute_hash(data) + (suffix or "")
-            key = f"{self.prefix}/{name}"
-            self.client.upload_fileobj(data, self.bucket, key)
-            return Resource(f"s3://{self.bucket}/{key}")
+            if uri is None:
+                if name is None:
+                    name = compute_hash(data) + (suffix or "")
+                uri = f"s3://{self.bucket}/{self.prefix}/{name}"
+            bucket, key = self.parse_uri(uri)
+            self.client.upload_fileobj(data, bucket, key)
+            return Resource(f"s3://{bucket}/{key}")
         finally:
             if filepath is not None:
                 data.close()
@@ -471,9 +474,8 @@ class LambdaRunner(Runner):
             status = 200 if response else 201
             return {"status": status, "response": response, "message": msg}
         except Exception as e:
-            return {"status": 400, "response": None, "message": str(e)}
+            return {"status": 400, "response": {}, "message": str(e)}
 
     def delete(self, state):
         if self.s3.exists(self.output_loc):
-            bucket, key = self.s3.parse_uri(self.output_loc)
-            self.s3.client.delete_object(Bucket=bucket, Key=key)
+            self.s3.rm(self.output_loc)

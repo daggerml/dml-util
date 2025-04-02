@@ -21,9 +21,14 @@ class Batch(LambdaRunner):
 
     def submit(self):
         sub_uri, sub_kwargs, sub_adapter = self._to_data()
-        image = self.kwargs.pop("image")
+        print(f"{sub_uri = }")
+        print(f"{sub_kwargs = }")
+        print(f"{sub_adapter = }")
+        kw = self.kwargs.copy()
+        kw.pop("sub")
+        image = kw.pop("image")["uri"]
         container_props = DFLT_PROP
-        container_props.update(self.kwargs)
+        container_props.update(kw)
         needs_gpu = any(x["type"] == "GPU" for x in container_props.get("resourceRequirements", []))
         logger.info("createing job definition with name: %r", f"fn-{self.cache_key}")
         response = self.client.register_job_definition(
@@ -33,12 +38,14 @@ class Batch(LambdaRunner):
                 "image": image,
                 "command": [
                     sub_adapter,
+                    "-d",
                     "-i",
-                    self.s3.put(self.dump.encode(), name="input.dump"),
+                    self.s3.put(sub_kwargs.encode(), name="input.dump"),
                     "-o",
                     self.s3.name2uri("output.dump"),
                     "-e",
                     self.s3.name2uri("error.dump"),
+                    sub_uri,
                 ],
                 "environment": [
                     *[{"name": k, "value": v} for k, v in self.env.items()],
@@ -74,21 +81,30 @@ class Batch(LambdaRunner):
             state = self.submit()
             job_id = state["job_id"]
             return state, f"{job_id = } submitted", {}
-        dump = {}
         job_id, status = self.describe_job(state)
-        if status in [SUCCESS_STATE, FAILED_STATE, None]:
-            if not self.s3.exists("output.dump"):
-                msg = json.dumps(
-                    {
-                        "job_id": job_id,
-                        "message": "finished without writing output",
-                        "status_reason": self.job["statusReason"],
-                    }
-                )
-                raise RuntimeError(msg)
-            dump = self.s3.get("output.dump")
         msg = f"{job_id = } {status}"
-        return state, msg, dump
+        logger.info(msg)
+        if status in PENDING_STATES:
+            return state, msg, {}
+        if self.s3.exists("error.dump"):
+            err = self.s3.get("error.dump").decode()
+            logger.info("%r found with content: %r", self.s3.name2uri("error.dump"), err)
+            msg += f"\n\n{err}"
+        if status == SUCCESS_STATE and self.s3.exists("output.dump"):
+            logger.info("job finished successfully and output was written...")
+            js = self.s3.get_js("output.dump")
+            logger.info("dump = %r", js)
+            return state, msg, js
+        logger.info("file: %r does not exist", self.s3.name2uri("output.dump"))
+        msg = json.dumps(
+            {
+                "job_id": job_id,
+                "message": msg,
+                "status_reason": ("status is none" if status is None else self.job_desc["statusReason"]),
+            }
+        )
+        logger.info(msg)
+        raise RuntimeError(f"{msg = }")
 
     def gc(self, state):
         job_id, status = self.describe_job(state)
