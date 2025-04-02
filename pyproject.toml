@@ -33,7 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dml = [
   "daggerml==0.0.33",
-  "daggerml-cli==0.0.24",
+  "daggerml-cli==0.0.25",
 ]
 nb = [
   "jupyter",
