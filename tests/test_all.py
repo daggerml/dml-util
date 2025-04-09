@@ -224,6 +224,7 @@ class TestFunks(FullDmlTestCase):
                 d0.n0 = d0.f0(1, 0)
 
     @skipIf(not shutil.which("hatch"), "hatch is not available")
+    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_funkify_hatch(self):
         @funkify(
             uri="hatch",
@@ -250,6 +251,7 @@ class TestFunks(FullDmlTestCase):
             assert d0.result.value() == "2.2.3"
 
     @skipIf(not shutil.which("conda"), "conda is not available")
+    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_funkify_conda(self):
         @funkify
         def dag_fn(dag):
@@ -493,6 +495,7 @@ class TestSSH(FullDmlTestCase):
         shutil.rmtree(self.tmpdir)
         super().tearDown()
 
+    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions is messed up")
     def test_ssh(self):
         @funkify(
             uri="ssh",
