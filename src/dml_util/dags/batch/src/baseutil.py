@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import subprocess
-import traceback
 from dataclasses import dataclass, field
 from io import BytesIO
 from itertools import product
@@ -98,20 +97,6 @@ def get_client(name):
     logger.info("getting %r client", name)
     config = Config(connect_timeout=5, retries={"max_attempts": 5, "mode": "adaptive"})
     return boto3.client(name, config=config)
-
-
-class WithDataError(Exception):
-    def __init__(self, message, response=None):
-        super().__init__(message)
-        self.response = response
-
-    @classmethod
-    def from_ex(cls, e, response=None):
-        if isinstance(e, WithDataError):
-            e.response = response or e.response
-            return e
-        msg = f"Error: {e}\nTraceback:\n----------\n{traceback.format_exc()}"
-        return cls(msg, response=response)
 
 
 def js_dump(data, **kw):
@@ -359,9 +344,11 @@ class LocalState(State):
         if "DML_FN_CACHE_DIR" in os.environ:
             cache_dir = os.environ["DML_FN_CACHE_DIR"]
         else:
+            from dml_util import __version__
+
             status = subprocess.run(["dml", "status"], check=True, capture_output=True)
             config_dir = json.loads(status.stdout.decode())["config_dir"]
-            cache_dir = f"{config_dir}/cache/dml-util"
+            cache_dir = f"{config_dir}/cache/dml-util/v{__version__}"
         os.makedirs(cache_dir, exist_ok=True)
         self.state_file = Path(cache_dir) / f"{self.cache_key}.json"
 
@@ -431,28 +418,31 @@ class Runner:
         delete = False
         if state is None:
             return {}, self._fmt("Could not acquire job lock")
+        if "result" in state:
+            return state["result"], self._fmt("returning cached...")
         try:
             logger.info("getting info from %r", self.state_class.__name__)
             state, msg, response = self.update(state)
-            if response.get("dump") is None:
-                self.put_state(state)
-            else:
+            if state is None:
                 delete = True
+            else:
+                if response.get("dump") is not None:
+                    state["result"] = response
+                    self.gc(state)
+                self.put_state(state)
             return response, self._fmt(msg)
-        except Exception as e:
-            if isinstance(e, WithDataError):
-                self.put_state(state)
-            else:
-                delete = True
+        except Exception:
+            delete = True
             raise
         finally:
             if delete:
-                self.delete(state)
+                if not os.getenv("DML_NO_GC"):
+                    self.gc(state)
                 self.state.delete()
             else:
                 self.state.unlock()
 
-    def delete(self, state):
+    def gc(self, state):
         pass
 
 
@@ -476,6 +466,6 @@ class LambdaRunner(Runner):
         except Exception as e:
             return {"status": 400, "response": {}, "message": str(e)}
 
-    def delete(self, state):
+    def gc(self, state):
         if self.s3.exists(self.output_loc):
             self.s3.rm(self.output_loc)

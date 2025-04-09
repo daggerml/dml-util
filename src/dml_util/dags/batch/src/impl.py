@@ -1,4 +1,3 @@
-# TODO:  should install dml-util and use it directly
 import json
 import logging
 import os
@@ -107,27 +106,24 @@ class Batch(LambdaRunner):
         raise RuntimeError(f"{msg = }")
 
     def gc(self, state):
-        job_id, status = self.describe_job(state)
-        try:
-            self.client.cancel_job(jobId=job_id, reason="gc")
-        except ClientError:
-            pass
-        job_def = state["job_def"]
-        try:
-            self.client.deregister_job_definition(jobDefinition=job_def)
-            logger.info("Successfully deregistered: %r", job_def)
-            return
-        except ClientError as e:
-            if e.response.get("Error", {}).get("Code") != "ClientException":
-                raise
-            if "DEREGISTERED" not in e.response.get("Error", {}).get("Message"):
-                raise
-        self.s3.rm(*self.s3.ls(recursive=True))
-
-    def delete(self, state):
         if state is not None and len(state) > 0:
-            self.gc(state)
-        super().delete(state)
+            job_id, status = self.describe_job(state)
+            try:
+                self.client.cancel_job(jobId=job_id, reason="gc")
+            except ClientError:
+                pass
+            job_def = state["job_def"]
+            try:
+                self.client.deregister_job_definition(jobDefinition=job_def)
+                logger.info("Successfully deregistered: %r", job_def)
+                return
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") != "ClientException":
+                    raise
+                if "DEREGISTERED" not in e.response.get("Error", {}).get("Message"):
+                    raise
+            self.s3.rm(*self.s3.ls(recursive=True))
+        super().gc(state)
 
 
 handler = Batch.handler

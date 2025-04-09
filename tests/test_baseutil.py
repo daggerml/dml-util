@@ -9,13 +9,7 @@ from unittest import TestCase, skipIf
 import boto3
 
 from dml_util import S3Store
-from dml_util.baseutil import (
-    S3_BUCKET,
-    S3_PREFIX,
-    DynamoState,
-    WithDataError,
-    dict_product,
-)
+from dml_util.baseutil import S3_BUCKET, S3_PREFIX, DynamoState, dict_product
 
 _root_ = Path(__file__).parent.parent
 
@@ -44,11 +38,7 @@ class AwsTestCase(TestCase):
         for k in sorted(os.environ.keys()):
             if k.startswith("AWS_"):
                 del os.environ[k]
-        os.environ["AWS_ACCESS_KEY_ID"] = "foo"
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "foo"
         self.region = "us-east-1"
-        os.environ["AWS_REGION"] = self.region
-        os.environ["AWS_DEFAULT_REGION"] = self.region
         # this loads env vars, so import after clearing
         from moto.server import ThreadedMotoServer
 
@@ -56,8 +46,17 @@ class AwsTestCase(TestCase):
         self.server = ThreadedMotoServer(port=0)
         self.server.start()
         self.moto_host, self.moto_port = self.server._server.server_address
-        self.endpoint = f"http://{self.moto_host}:{self.moto_port}"
-        os.environ["AWS_ENDPOINT_URL"] = self.endpoint
+        self.moto_endpoint = f"http://{self.moto_host}:{self.moto_port}"
+        aws_env = {
+            "AWS_ACCESS_KEY_ID": "foo",
+            "AWS_SECRET_ACCESS_KEY": "foo",
+            "AWS_REGION": self.region,
+            "AWS_DEFAULT_REGION": self.region,
+            "AWS_ENDPOINT_URL": self.moto_endpoint,
+        }
+        for k, v in aws_env.items():
+            os.environ[k] = v
+        self.aws_env = aws_env
 
     def tearDown(self):
         self.server.stop()
@@ -67,7 +66,7 @@ class AwsTestCase(TestCase):
 class TestS3(AwsTestCase):
     def setUp(self):
         super().setUp()
-        boto3.client("s3", endpoint_url=self.endpoint).create_bucket(Bucket=S3_BUCKET)
+        boto3.client("s3", endpoint_url=self.moto_endpoint).create_bucket(Bucket=S3_BUCKET)
 
     def test_js(self):
         s3 = S3Store()
@@ -158,15 +157,6 @@ class TestDynamo(AwsTestCase):
 
 
 class TestMisc(TestCase):
-    def test_dag_run_error(self):
-        msg = "this is a test"
-        response = "qwer"
-        try:
-            raise WithDataError(msg, response=response)
-        except WithDataError as e:
-            assert str(e) == msg
-            assert e.response == response
-
     def test_dict_prod(self):
         param_dict = {"foo": [2, 3], "bar": "abc", "baz": [[5, 5], [5, 8]]}
         piter = list(dict_product(param_dict))

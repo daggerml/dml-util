@@ -3,13 +3,13 @@ import os
 import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
-from unittest import TestCase, mock, skipIf
+from unittest import skipIf
 
 import boto3
 from daggerml import Dml, Resource
@@ -30,16 +30,24 @@ _root_ = Path(__file__).parent.parent
 # TODO: Write a test-adapter that will write to a file and communicate via log messages
 
 
-class TestFunks(AwsTestCase):
+class FullDmlTestCase(AwsTestCase):
     def setUp(self):
         super().setUp()
-        boto3.client("s3", endpoint_url=self.endpoint).create_bucket(Bucket=S3_BUCKET)
+        boto3.client("s3", endpoint_url=self.moto_endpoint).create_bucket(Bucket=S3_BUCKET)
+        for key in ["DML_REPO", "DML_CONFIG_DIR", "DML_PROJECT_DIR"]:
+            if key in os.environ:
+                del os.environ[key]
+        self.tmpd = TemporaryDirectory()
+        os.environ["DML_FN_CACHE_DIR"] = self.tmpd.name
 
     def tearDown(self):
         s3 = S3Store()
         s3.rm(*s3.ls(recursive=True))
+        self.tmpd.cleanup()
         super().tearDown()
 
+
+class TestFunks(FullDmlTestCase):
     def test_s3_uri(self):
         s3 = S3Store()
         raw = b"foo bar baz"
@@ -78,6 +86,76 @@ class TestFunks(AwsTestCase):
             logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
             assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
 
+    def test_executor_caching_success(self):
+        @funkify
+        def dag_fn(dag):
+            from uuid import uuid4
+
+            return uuid4().hex
+
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            with dml.new("d0", "d0") as d0:
+                d0.f0 = dag_fn
+                d0.n0 = d0.f0(*vals)
+                hex0 = d0.n0.value()
+        # new database
+        with Dml() as dml:
+            with dml.new("d0", "d0") as d0:
+                d0.f0 = dag_fn
+                d0.n0 = d0.f0(*vals)
+                hex1 = d0.n0.value()
+        assert hex0 == hex1
+
+    def test_executor_caching_my_error(self):
+        @funkify
+        def dag_fn(dag):
+            from uuid import uuid4
+
+            raise RuntimeError(f"dml: {uuid4().hex}")
+
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.f0 = dag_fn
+            with self.assertRaisesRegex(Error, "dml:") as e:
+                d0.n0 = d0.f0(*vals)
+            err_msg0 = str(e.exception.message)
+        # new database
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.f0 = dag_fn
+            with self.assertRaisesRegex(Error, "dml:") as e:
+                d0.n0 = d0.f0(*vals)
+            err_msg1 = str(e.exception.message)
+        assert err_msg0 == err_msg1
+
+    def test_executor_not_caching_adapter_error(self):
+        @funkify
+        def dag_fn(dag):
+            from uuid import uuid4
+
+            raise RuntimeError(f"dml: {uuid4().hex}")
+
+        # corrupting the script so the adapter fails
+        dag_fn.data["script"] = dag_fn.data["script"][50:]
+
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.f0 = dag_fn
+            with self.assertRaisesRegex(Error, "exit status") as e:
+                d0.n0 = d0.f0(*vals)
+            err_msg0 = str(e.exception.message)
+        # new database
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.f0 = dag_fn
+            with self.assertRaisesRegex(Error, "exit status") as e:
+                d0.n0 = d0.f0(*vals)
+            err_msg1 = str(e.exception.message)
+        assert err_msg0 != err_msg1
+
     def test_funkify_string(self):
         s3 = S3Store()
         with Dml() as dml:
@@ -107,22 +185,57 @@ class TestFunks(AwsTestCase):
             logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
             assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
 
+    def test_subdag_caching(self):
+        @funkify
+        def subdag_fn(dag):
+            from uuid import uuid4
+
+            return uuid4().hex
+
+        @funkify
+        def dag_fn(dag):
+            from uuid import uuid4
+
+            fn, *args = dag.argv[1:]
+            return {str(x.value()): fn(x) for x in args}, uuid4().hex
+
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.dag_fn = dag_fn
+            d0.subdag_fn = subdag_fn
+            with ThreadPoolExecutor(2) as pool:
+                futs = [pool.submit(d0.dag_fn, d0.subdag_fn, *args) for args in [vals, reversed(vals)]]
+                a, b = [f.result() for f in futs]
+            assert a != b
+            assert a[0].value() == b[0].value()
+            assert a[1].value() != b[1].value()
+
     def test_funkify_errors(self):
         @funkify
         def dag_fn(dag):
             dag.result = dag.argv[1].value() / dag.argv[-1].value()
             return dag.result
 
-        with TemporaryDirectory() as fn_cache_dir:
-            with mock.patch.dict(os.environ, DML_FN_CACHE_DIR=fn_cache_dir):
-                with Dml() as dml:
-                    d0 = dml.new("d0", "d0")
-                    d0.f0 = dag_fn
-                    with self.assertRaisesRegex(Error, "division by zero"):
-                        d0.n0 = d0.f0(1, 0)
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.f0 = dag_fn
+            with self.assertRaisesRegex(Error, "division by zero"):
+                d0.n0 = d0.f0(1, 0)
 
     @skipIf(shutil.which("hatch") is None, "hatch is not available")
     def test_funkify_hatch(self):
+        @funkify(
+            uri="hatch",
+            data={
+                "name": "pandas",
+                "path": str(_root_),
+                "env": {
+                    "DML_FN_CACHE_DIR": self.tmpd.name,
+                    "AWS_ENDPOINT_URL": self.moto_endpoint,
+                },
+            },
+        )
         @funkify
         def dag_fn(dag):
             import pandas as pd
@@ -130,30 +243,44 @@ class TestFunks(AwsTestCase):
             dag.result = pd.__version__
             return dag.result
 
-        with TemporaryDirectory() as fn_cache_dir:
-            with mock.patch.dict(os.environ, DML_FN_CACHE_DIR=fn_cache_dir):
-                with Dml() as dml:
-                    d0 = dml.new("d0", "d0")
-                    d0.f0 = dag_fn
-                    with self.assertRaisesRegex(Error, "No module named 'pandas'"):
-                        d0.f0()
-                    d0.f1 = funkify(
-                        dag_fn,
-                        "hatch",
-                        data={
-                            "name": "pandas",
-                            "path": str(_root_),
-                        },
-                    )
-                    d0.result = d0.f1()
-                    assert d0.result.value() == "2.2.3"
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.f0 = dag_fn
+            d0.result = d0.f0()
+            assert d0.result.value() == "2.2.3"
+
+    @skipIf(shutil.which("conda") is None, "conda is not available")
+    def test_funkify_conda(self):
+        @funkify
+        def dag_fn(dag):
+            import pandas as pd
+
+            return pd.Series({f"x{i}": i for i in dag.argv[1:].value()}).to_dict()
+
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            d0 = dml.new("d0", "d0")
+            d0.f0 = dag_fn
+            with self.assertRaisesRegex(Error, "No module named 'pandas'"):
+                d0.f0()
+            d0.f1 = funkify(
+                dag_fn,
+                "conda",
+                data={
+                    "name": "dml-pandas",
+                    "env": {
+                        "DML_FN_CACHE_DIR": self.tmpd.name,
+                        "AWS_ENDPOINT_URL": self.moto_endpoint,
+                    },
+                },
+            )
+            d0.result = d0.f1(*vals)
+            assert d0.result.value() == {f"x{i}": i for i in vals}
 
     @skipIf(docker is None, "docker not available")
-    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions interacts with docker strangely")
+    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_docker_build(self):
         from dml_util import dkr_build, funkify
-
-        context = _root_  # / "tests/assets/dkr-context"
 
         def fn(dag):
             import sys
@@ -185,7 +312,7 @@ class TestFunks(AwsTestCase):
         vals = [1, 2, 3]
         with Dml() as dml:
             with dml.new("test", "asdf") as dag:
-                dag.tar = s3.tar(dml, context, excludes=["tests/*.py"])
+                dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
                 dag.dkr = dkr_build
                 dag.img = dag.dkr(
                     dag.tar,
@@ -253,9 +380,10 @@ class TestFunks(AwsTestCase):
             dag.result = dag.stack
 
 
-@skipIf(True, "ssh needs some work")
-class TestSSH(TestCase):
+# @skipIf(True, "ssh needs some work")
+class TestSSH(FullDmlTestCase):
     def setUp(self):
+        super().setUp()
         # Create a temporary directory for our files.
         self.tmpdir = tempfile.mkdtemp()
 
@@ -328,6 +456,11 @@ class TestSSH(TestCase):
             "-o",
             "UserKnownHostsFile=/dev/null",
         ]
+        self.resource_data = {
+            "user": self.user,
+            "host": "127.0.0.1",
+            "flags": self.flags,
+        }
 
         # Wait until the server is ready by polling the port.
         deadline = time.time() + 5  # wait up to 5 seconds
@@ -358,17 +491,42 @@ class TestSSH(TestCase):
                 self.sshd_proc.kill()
         # Clean up temporary files.
         shutil.rmtree(self.tmpdir)
+        super().tearDown()
 
     def test_ssh(self):
-        params = {
-            "user": self.user,
-            "host": "127.0.0.1",
-            "flags": self.flags,
-            "executable": sys.executable,
-            "path_dir": os.path.dirname(shutil.which("dml")),
-        }
+        @funkify(
+            uri="ssh",
+            data=self.resource_data,
+        )
+        @funkify(
+            uri="hatch",
+            data={
+                "name": "pandas",
+                "path": str(_root_),
+                "env": {
+                    "DML_FN_CACHE_DIR": self.tmpd.name,
+                    "AWS_ENDPOINT_URL": self.moto_endpoint,
+                },
+            },
+        )
+        @funkify
+        def fn(dag):
+            import pandas as pd
 
-        @funkify(uri="ssh", data=params)
+            return pd.Series({f"x{i}": i for i in dag.argv[1:].value()}).to_dict()
+
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            with dml.new("test", "asdf") as dag:
+                dag.fn = fn
+                dag.ans = dag.fn(*vals)
+                assert dag.ans.value() == {f"x{i}": i for i in vals}
+
+    @skipIf(docker is None, "docker not available")
+    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
+    def test_docker_build(self):
+        from dml_util import dkr_build, funkify
+
         def fn(dag):
             import sys
 
@@ -376,9 +534,67 @@ class TestSSH(TestCase):
             print("testing stderr...", file=sys.stderr)
             dag.result = sum(dag.argv[1:].value())
 
+        flags = [
+            "--platform",
+            "linux/amd64",
+            "-e",
+            f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
+            "-p",
+            f"{self.moto_port}:{self.moto_port}",
+        ]
+        host_ip = subprocess.run(
+            "ip route | awk '/default/ {print $3}'",
+            shell=True,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.strip()
+        if host_ip:
+            print(f"{host_ip = !r}")
+            flags.append(f"--add-host=host.docker.internal:{host_ip}")
+
+        dkr_build_in_hatch = funkify(
+            dkr_build,
+            "hatch",
+            data={
+                "name": "pandas",
+                "path": str(_root_),
+                "env": {
+                    "DML_FN_CACHE_DIR": self.tmpd.name,
+                    **self.aws_env,
+                },
+            },
+        )
+        s3 = S3Store()
         vals = [1, 2, 3]
         with Dml() as dml:
             with dml.new("test", "asdf") as dag:
-                dag.fn = fn
-                dag.ans = dag.fn(*vals)
-                assert dag.ans.value() == sum(vals)
+                dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
+                dag.dkr = funkify(dkr_build_in_hatch, uri="ssh", data=self.resource_data)
+                dag.img = dag.dkr(
+                    dag.tar,
+                    [
+                        "--platform",
+                        "linux/amd64",
+                        "-f",
+                        "tests/assets/dkr-context/Dockerfile",
+                    ],
+                )
+                dag.fn0 = funkify(fn)
+                fn0 = dag.fn0.value()
+                # fn0 = Resource("test", fn0.data, fn0.adapter)
+                dag.fn = funkify(
+                    fn0,
+                    "docker",
+                    {"image": dag.img.value(), "flags": flags},
+                    adapter="local",
+                )
+                dag.baz = dag.fn(*vals)
+                assert dag.baz.value() == sum(vals)
+                dag2 = dml.load(dag.baz)
+                assert dag2.result is not None
+            dag2 = dml("dag", "describe", dag2._ref.to.split("/")[-1])
+            logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
+            self.assertCountEqual(logs.keys(), ["stdout", "stderr", "docker/combined"])
+            assert logs["stdout"] == "testing stdout..."
+            assert logs["stderr"] == "testing stderr..."

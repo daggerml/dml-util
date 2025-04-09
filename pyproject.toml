@@ -33,7 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dml = [
   "daggerml==0.0.33",
-  "daggerml-cli==0.0.25",
+  "daggerml-cli==0.0.27",
 ]
 nb = [
   "jupyter",
@@ -90,8 +90,10 @@ artifacts = [
 python="3.10"
 dependencies = [
   "twine",
+  "daggerml @ {root:uri}/submodules/python-lib",
+  "daggerml_cli @ {root:uri}/submodules/python-lib/submodules/daggerml_cli",
 ]
-features = ["dml", "docker", "test", "nb"]
+features = ["docker", "test", "nb"]
 
 [tool.hatch.envs.default.scripts]
 test = 'pytest . {args}'
@@ -104,9 +106,10 @@ DML_S3_PREFIX = "jobs"
 
 [tool.hatch.envs.pandas]
 template = "default"
-features = ["dml"]
 dependencies = [
-  "pandas==2.2.3"
+  "pandas==2.2.3",
+  "daggerml @ {root:uri}/submodules/python-lib",
+  "daggerml_cli @ {root:uri}/submodules/python-lib/submodules/daggerml_cli",
 ]
 
 [tool.hatch.envs.app]
@@ -133,8 +136,9 @@ DML_S3_PREFIX = "jobs"
 [tool.hatch.envs.df]
 dependencies = [
   "polars==1.24",
+  "daggerml @ {root:uri}/submodules/python-lib",
+  "daggerml_cli @ {root:uri}/submodules/python-lib/submodules/daggerml-cli",
 ]
-features = ["dml"]
 
 [tool.ruff]
 target-version = "py39"

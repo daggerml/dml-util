@@ -14,9 +14,9 @@ from urllib.parse import urlparse
 
 import boto3
 from botocore.exceptions import ClientError
-from daggerml import Dml, Resource
+from daggerml import Dml, Error, Resource
 
-from dml_util.baseutil import Runner, S3Store, WithDataError, get_client
+from dml_util.baseutil import Runner, S3Store, get_client
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class Adapter:
                     _write_data(json.dumps(resp), args.output)
                     sys.exit(0)
             except Exception as e:
-                _write_data(str(WithDataError.from_ex(e)), args.error)  # to get the stacktrace
+                _write_data(str(Error(e)), args.error)  # to get the stacktrace
                 sys.exit(1)
             if args.daemon:
                 sleep(0.1)
@@ -95,7 +95,7 @@ class Lambda(Adapter):
         )
         payload = json.loads(response["Payload"].read())
         if payload.get("status", 400) // 100 in [4, 5]:
-            raise WithDataError(payload.get("status", payload))
+            raise RuntimeError(payload.get("status", payload))
         out = payload.get("response", {})
         return out, payload.get("message")
 
@@ -140,12 +140,13 @@ def _run_cli(command, **kw):
 @Local.register
 class Script(Runner):
     @classmethod
-    def funkify(cls, script, cmd=("python3",)):
-        return {"script": script, "cmd": list(cmd)}
+    def funkify(cls, script, cmd=("python3",), suffix=".py"):
+        return {"script": script, "cmd": list(cmd), "suffix": suffix}
 
     def submit(self):
         tmpd = _run_cli("mktemp -d -t dml.XXXXXX".split())
-        with open(f"{tmpd}/script", "w") as f:
+        script_path = f"{tmpd}/script" + (self.kwargs["suffix"] or "")
+        with open(script_path, "w") as f:
             f.write(self.kwargs["script"])
         with open(f"{tmpd}/input.dump", "w") as f:
             f.write(self.dump)
@@ -158,7 +159,7 @@ class Script(Runner):
             }
         )
         proc = subprocess.Popen(
-            [*self.kwargs["cmd"], f"{tmpd}/script"],
+            [*self.kwargs["cmd"], script_path],
             stdout=open(f"{tmpd}/stdout", "w"),
             stderr=open(f"{tmpd}/stderr", "w"),
             start_new_session=True,
@@ -201,15 +202,18 @@ class Script(Runner):
         if os.path.exists(f"{tmpd}/stderr"):
             with open(f"{tmpd}/stderr", "r") as f:
                 msg = f"{msg}\nSTDERR:\n-------\n{f.read()}"
+        if os.path.exists(f"{tmpd}/stdout"):
+            with open(f"{tmpd}/stdout", "r") as f:
+                msg = f"{msg}\n\nSTDOUT:\n-------\n{f.read()}"
         raise RuntimeError(msg)
 
-    def delete(self, state):
+    def gc(self, state):
         if "pid" in state:
             _run_cli(f"kill -9 {state['pid']} || echo", shell=True)
         if "tmpd" in state:
             command = "rm -r {} || echo".format(shlex.quote(state["tmpd"]))
             _run_cli(command, shell=True)
-        super().delete(state)
+        super().gc(state)
 
 
 @Local.register
@@ -219,11 +223,15 @@ class Wrapped(Runner):
         kw = {"script": script, "sub": sub}
         return kw
 
-    def run(self):
+    def get_script_and_args(self):
         sub_uri, sub_kwargs, sub_adapter = self._to_data()
+        return self.kwargs["script"], sub_adapter, sub_uri, sub_kwargs
+
+    def run(self):
+        script, sub_adapter, sub_uri, sub_kwargs = self.get_script_and_args()
         with TemporaryDirectory() as tmpd:
             with open(f"{tmpd}/script", "w") as f:
-                f.write(self.kwargs["script"])
+                f.write(script)
             subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
             cmd = [f"{tmpd}/script", sub_adapter, sub_uri]
             result = subprocess.run(
@@ -232,6 +240,7 @@ class Wrapped(Runner):
                 capture_output=True,
                 check=False,
                 text=True,
+                env=self.env,
             )
         if result.returncode != 0:
             msg = "\n".join(
@@ -255,12 +264,40 @@ class Wrapped(Runner):
 @Local.register
 class Hatch(Wrapped):
     @classmethod
-    def funkify(cls, name, sub, path=None):
-        script = "#!/bin/bash\n\n"
+    def funkify(cls, name, sub, env=None, path=None):
+        script = [
+            "#!/bin/bash",
+            "set -e",
+            "",
+            "export PATH=~/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        ]
+        if env is not None:
+            for k, v in env.items():
+                script.append(f"export {k}={v}\n")
         if path is not None:
-            script += f"cd {shlex.quote(path)}\n"
-        script += f"hatch -e {name} run $1 $2"
-        return super().funkify(script, sub)
+            script.append(f"cd {shlex.quote(path)}")
+        script.append(f"hatch -e {name} run $1 $2")
+        return Wrapped.funkify("\n".join(script), sub)
+
+
+@Local.register
+class Conda(Wrapped):
+    @classmethod
+    def funkify(cls, name, sub, conda_loc="~/.local/conda", env=None):
+        script = [
+            "#!/bin/bash",
+            "set -e",
+            "",
+            "export PATH=~/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            f"source {conda_loc}/etc/profile.d/conda.sh",
+            "",
+        ]
+        if env is not None:
+            for k, v in env.items():
+                script.append(f"export {k}={v}\n")
+        script.append(f"conda activate {name}")
+        script.append("$1 $2")
+        return Wrapped.funkify("\n".join(script), sub)
 
 
 @Local.register
@@ -355,13 +392,65 @@ class Docker(Runner):
         ).strip()
         raise RuntimeError(msg)
 
-    def delete(self, state):
+    def gc(self, state):
         if "cid" in state:
             _run_cli(["docker", "rm", state["cid"]])
         if "tmpd" in state:
             command = "rm -r {} || echo".format(shlex.quote(state["tmpd"]))
             _run_cli(command, shell=True)
-        super().delete(state)
+        super().gc(state)
+
+
+@Local.register
+class Ssh(Runner):
+    @classmethod
+    def funkify(cls, host, sub, port=None, user=None, keyfile=None, flags=None):
+        return {
+            "sub": sub,
+            "host": host,
+            "port": port,
+            "user": user,
+            "keyfile": keyfile,
+            "flags": flags or [],
+        }
+
+    def _run_cmd(self, *user_cmd, **kw):
+        flags = []
+        if self.kwargs["keyfile"]:
+            flags += ["-i", self.kwargs["keyfile"]]
+        if self.kwargs["port"]:
+            flags += ["-p", str(self.kwargs["port"])]
+        flags = [*flags, *self.kwargs["flags"]]
+        host = self.kwargs["host"]
+        if self.kwargs["user"] is not None:
+            host = self.kwargs["user"] + f"@{host}"
+        cmd = ["ssh", *flags, host, " ".join(user_cmd)]
+        resp = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            **kw,
+        )
+        if resp.returncode != 0:
+            msg = f"{cmd}\n{resp.returncode = }\n{resp.stdout}\n\n{resp.stderr}"
+            raise RuntimeError(msg)
+        stderr = resp.stderr.strip()
+        logger.debug(f"SSH STDERR: {stderr}")
+        return resp.stdout.strip(), stderr
+
+    def run(self):
+        sub_uri, sub_kwargs, sub_adapter = self._to_data()
+        assert sub_adapter == Local.ADAPTER
+        runner = Local.RUNNERS[sub_uri](**json.loads(sub_kwargs))
+        script, sub_adapter, sub_uri, sub_kwargs = runner.get_script_and_args()
+        tmpf, _ = self._run_cmd("mktemp", "-t", "dml.XXXXXX.sh")
+        self._run_cmd("cat", ">", tmpf, input=script)
+        self._run_cmd("chmod", "+x", tmpf)
+        stdout, stderr = self._run_cmd(tmpf, sub_adapter, sub_uri, input=sub_kwargs)
+        stdout = json.loads(stdout or "{}")
+        self._run_cmd("rm", tmpf)
+        return stdout, stderr
 
 
 @Local.register

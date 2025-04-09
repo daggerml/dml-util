@@ -1,4 +1,3 @@
-import re
 from functools import partial
 from inspect import getsource
 from textwrap import dedent
@@ -11,16 +10,20 @@ from dml_util.adapter import Adapter
 def _fnk(fn, extra_fns, extra_lines):
     def get_src(f):
         lines = dedent(getsource(f)).split("\n")
-        lines = [line for line in lines if not re.match("^@.*funkify", line)]
+        while not lines[0].startswith("def "):
+            lines.pop(0)
         return "\n".join(lines)
 
     tpl = dedent(
         """
         #!/usr/bin/env python3
+        import logging
         import os
         from urllib.parse import urlparse
 
         from daggerml import Dml
+
+        logger = logging.getLogger(__name__)
 
         {src}
 
@@ -52,11 +55,14 @@ def _fnk(fn, extra_fns, extra_lines):
                 f.write(dump)
 
         if __name__ == "__main__":
-            with Dml() as dml:
-                with dml.new(data=_get_data(), message_handler=_handler) as dag:
-                    res = {fn_name}(dag)
-                    if dag._ref is None:
-                        dag.result = res
+            try:
+                with Dml() as dml:
+                    with dml.new(data=_get_data(), message_handler=_handler) as dag:
+                        res = {fn_name}(dag)
+                        if dag._ref is None:
+                            dag.result = res
+            except Exception:
+                logger.exception("{fn_name} failed with exception.")
         """
     ).strip()
     src = tpl.format(

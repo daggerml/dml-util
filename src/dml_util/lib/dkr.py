@@ -12,8 +12,8 @@ import docker
 from daggerml import Resource
 
 
-def _run_cmd(cmd, input=None):
-    resp = subprocess.run(cmd, check=False, text=True, stderr=subprocess.PIPE, input=input)
+def _run_cmd(cmd, **kw):
+    resp = subprocess.run(cmd, check=False, text=True, stderr=subprocess.PIPE, **kw)
     if resp.returncode != 0:
         msg = f"command: {cmd} failed\nSTDERR:\n-------\n{resp.stderr}"
         raise RuntimeError(msg)
@@ -39,7 +39,17 @@ def dkr_login(client, dkr_client=None):
     proxy_endpoint = auth_data["proxyEndpoint"]
     decoded_token = base64.b64decode(auth_token).decode("utf-8")
     username, password = decoded_token.split(":")
-    return dkr_client.login(username, password, registry=proxy_endpoint[8:])
+    return _run_cmd(
+        [
+            "docker",
+            "login",
+            "--username",
+            "AWS",
+            "--password-stdin",
+            proxy_endpoint[8:],
+        ],
+        input=password,
+    )
 
 
 def dkr_push(local_image, repo_uri):
