@@ -223,7 +223,7 @@ class TestFunks(FullDmlTestCase):
             with self.assertRaisesRegex(Error, "division by zero"):
                 d0.n0 = d0.f0(1, 0)
 
-    @skipIf(shutil.which("hatch") is None, "hatch is not available")
+    @skipIf(not shutil.which("hatch"), "hatch is not available")
     def test_funkify_hatch(self):
         @funkify(
             uri="hatch",
@@ -249,7 +249,7 @@ class TestFunks(FullDmlTestCase):
             d0.result = d0.f0()
             assert d0.result.value() == "2.2.3"
 
-    @skipIf(shutil.which("conda") is None, "conda is not available")
+    @skipIf(not shutil.which("conda"), "conda is not available")
     def test_funkify_conda(self):
         @funkify
         def dag_fn(dag):
