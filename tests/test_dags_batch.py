@@ -47,7 +47,6 @@ class TestDagBatch(FullDmlTestCase):
         self.dynamodb_client = get_client("dynamodb")
         self.dynamodb_table = f"test-{uuid4()}"
         os.environ["DYNAMODB_TABLE"] = self.dynamodb_table
-        # create a DynamoDB table for testing with schema inferred from `DynamoState` class
         self.dynamodb_client.create_table(
             TableName=self.dynamodb_table,
             KeySchema=[
@@ -89,7 +88,7 @@ class TestDagBatch(FullDmlTestCase):
             assert conf.error.read() == "ok"
 
     def test_aws_batch(self):
-        from dml_util.dags.batch.src.impl import Batch
+        from dml_util.dags.batch.impl import Batch
 
         data = {
             "cache_key": "foo:key",
@@ -156,7 +155,7 @@ class TestDagBatch(FullDmlTestCase):
                 assert conf.output.read() != ""
 
     def test_aws_batch_no_output(self):
-        from dml_util.dags.batch.src.impl import Batch
+        from dml_util.dags.batch.impl import Batch
 
         data = {
             "cache_key": "foo:key",

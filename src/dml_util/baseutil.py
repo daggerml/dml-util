@@ -368,7 +368,7 @@ class Runner:
     cache_key: str
     kwargs: "any"
     dump: str
-    retry: bool  # TODO: executor caching
+    retry: bool
     state: State = field(init=False)
     state_class = LocalState
 

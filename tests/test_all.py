@@ -30,11 +30,6 @@ except ImportError:
 
 _root_ = Path(__file__).parent.parent
 
-# TODO: write unit tests for everything
-# TODO: Write a test-adapter that will write to a file and communicate via log messages
-
-# TODO: write a test for Batch(LambdaRunner)
-
 
 class Config:
     def __init__(self, **kwargs):
@@ -239,7 +234,6 @@ class TestFunks(FullDmlTestCase):
                 d0.n0 = d0.f0(1, 0)
 
     @skipIf(not shutil.which("hatch"), "hatch is not available")
-    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_funkify_hatch(self):
         @funkify(
             uri="hatch",
@@ -266,7 +260,6 @@ class TestFunks(FullDmlTestCase):
             assert d0.result.value() == "2.2.3"
 
     @skipIf(not shutil.which("conda"), "conda is not available")
-    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_funkify_conda(self):
         @funkify
         def dag_fn(dag):
@@ -452,6 +445,7 @@ class TestFunks(FullDmlTestCase):
     @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_docker_build(self):
         from dml_util import funkify
+        from dml_util.lib import dkr
 
         @funkify
         def fn(dag):
@@ -483,19 +477,6 @@ class TestFunks(FullDmlTestCase):
         with Dml() as dml:
             dag = dml.new("test", "asdf")
             dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
-            # dag.dkr = dkr_build
-            # dag.img = dag.dkr(
-            #     dag.tar,
-            #     [
-            #         "--platform",
-            #         "linux/amd64",
-            #         "-f",
-            #         "tests/assets/dkr-context/Dockerfile",
-            #     ],
-            # )
-            # FIXME: fix this
-            from dml_util.lib import dkr
-
             dag.img = dkr.dkr_build(
                 dag.tar.value().uri,
                 [
@@ -505,7 +486,6 @@ class TestFunks(FullDmlTestCase):
                     "tests/assets/dkr-context/Dockerfile",
                 ],
             )["image"]
-            # dag.img = Resource(uri="dml:27b3ddb95fdc439a89f8a0a270f073ba", data=None, adapter=None)
             assert isinstance(dag.img.value(), Resource)
             dag.fn = funkify(
                 fn,
@@ -754,7 +734,6 @@ class TestSSH(FullDmlTestCase):
                 )
                 dag.fn0 = funkify(fn)
                 fn0 = dag.fn0.value()
-                # fn0 = Resource("test", fn0.data, fn0.adapter)
                 dag.fn = funkify(
                     fn0,
                     "docker",
