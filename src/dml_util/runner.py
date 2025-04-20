@@ -2,8 +2,10 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from textwrap import dedent
 
@@ -132,12 +134,14 @@ class WrappedRunner(Runner):
 @LocalAdapter.register
 class Hatch(WrappedRunner):
     @classmethod
-    def funkify(cls, name, sub, env=None, path=None):
+    def funkify(cls, name, sub, env=None, path=None, hatch_path=None):
+        if hatch_path is None:
+            hatch_path = str(Path(shutil.which("hatch")).parent)
         script = [
             "#!/bin/bash",
             "set -e",
             "",
-            "export PATH=~/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            f"export PATH={hatch_path}:~/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
         if env is not None:
             for k, v in env.items():
