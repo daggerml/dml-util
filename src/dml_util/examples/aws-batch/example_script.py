@@ -6,7 +6,7 @@ if __name__ == "__main__":
     except Exception as e:
         print("ruh roh! can't install libs!", e)
         raise
-    from dml_util.adapter import aws_fndag
+    from dml_util import aws_fndag
 
     with aws_fndag() as dag:
         dag.n0 = sum(dag.argv[1:].value())

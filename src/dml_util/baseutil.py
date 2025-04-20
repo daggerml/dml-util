@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import boto3
+import psutil
 from botocore.client import Config
 from botocore.exceptions import ClientError
 
@@ -27,50 +28,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 5  # seconds
-
-
-# Static defaults
-_CONFIG_ITEMS = ["s3_bucket", "s3_prefix", "write_loc"]
-CONFIG_PATH = ".dml/util-config.json"
-
-
-def load_config():
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            config = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        config = {}
-    config = {k: os.getenv(f"DML_{k.upper()}", config.get(k)) for k in _CONFIG_ITEMS}
-    config = {k: v for k, v in config.items() if v is not None}
-    return config
-
-
-def write_config():
-    import argparse
-
-    parser = argparse.ArgumentParser(epilog='Example: prog key1=value1 "key2=value=with=equals"')
-    parser.add_argument(
-        "kvs",
-        nargs="+",
-        type=str,
-        help="Key-value pairs in the format key=value",
-    )
-    args = parser.parse_args()
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH) as f:
-            config = json.load(f)
-    else:
-        config = {}
-    for kv in args.kvs:
-        k, v = kv.split("=", 1)
-        config[k] = v
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(config, f)
-
-
-CONFIG = load_config()
-S3_BUCKET = CONFIG["s3_bucket"]
-S3_PREFIX = CONFIG["s3_prefix"]
+S3_BUCKET = os.environ["DML_S3_BUCKET"]
+S3_PREFIX = os.environ["DML_S3_PREFIX"]
 
 
 def tree_map(predicate, fn, item):
@@ -91,6 +50,33 @@ def dict_product(d):
 
 def now():
     return time()
+
+
+def _run_cli(command, check=True, **kw):
+    result = subprocess.run(command, capture_output=True, text=True, check=False, **kw)
+    if result.returncode != 0:
+        msg = f"_run_cli: {command}\n{result.returncode = }\n{result.stdout}\n\n{result.stderr}"
+        if check:
+            raise RuntimeError(msg)
+        return
+    return result.stdout.strip()
+
+
+def if_read_file(path):
+    if os.path.exists(path):
+        with open(path) as f:
+            return f.read()
+
+
+def proc_exists(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    proc = psutil.Process(pid)
+    return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
 
 
 def get_client(name):
@@ -130,6 +116,8 @@ class S3Store:
     def __post_init__(self):
         self.bucket = self.bucket or S3_BUCKET
         self.prefix = self.prefix or f"{S3_PREFIX}/data"
+        if self.bucket is None or self.prefix is None:
+            raise ValueError("Cannot instantiate S3Store without bucket and prefix")
 
     @staticmethod
     def get_write_prefix():
@@ -200,8 +188,9 @@ class S3Store:
             if filepath is not None:
                 data.close()
 
-    def put_js(self, data, **kw):
-        return self.put(js_dump(data, **kw).encode(), suffix=".json")
+    def put_js(self, data, uri=None, **kw):
+        suffix = ".json" if uri is None else None
+        return self.put(js_dump(data, **kw).encode(), uri=uri, suffix=suffix)
 
     def get_js(self, uri):
         return json.loads(self.get(uri).decode())
@@ -245,7 +234,7 @@ class DynamoState(State):
     run_id: str = field(default_factory=lambda: uuid4().hex)
     timeout: int = field(default=TIMEOUT)
     db: "boto3.client" = field(default_factory=lambda: get_client("dynamodb"))
-    tb: str = field(default=os.getenv("DYNAMODB_TABLE"))
+    tb: str = field(default_factory=lambda: os.getenv("DYNAMODB_TABLE"))
 
     def _update(self, key=None, **kw):
         try:
@@ -396,8 +385,11 @@ class Runner:
             "DML_CACHE_KEY": self.cache_key,
             "DML_WRITE_LOC": f"s3://{bucket}/{self.prefix}/data/{self.cache_key}",
         }
+        self.env.update({k: v for k, v in os.environ.items() if k.startswith("AWS_")})
+        if "DML_FN_CACHE_DIR" in os.environ:
+            self.env["DML_FN_CACHE_DIR"] = os.environ["DML_FN_CACHE_DIR"]
 
-    def _to_data(self):
+    def sub_data(self):
         sub = self.kwargs["sub"]
         ks = {
             "cache_key": self.cache_key,
@@ -418,6 +410,12 @@ class Runner:
         delete = False
         if state is None:
             return {}, self._fmt("Could not acquire job lock")
+        if self.retry and "result" in state:
+            logger.warning(
+                "[%s] dropping old state: %r because of retry flag",
+                self.cache_key,
+                state.pop("result"),
+            )
         if "result" in state:
             return state["result"], self._fmt("returning cached...")
         try:
@@ -427,8 +425,8 @@ class Runner:
                 delete = True
             else:
                 if response.get("dump") is not None:
-                    state["result"] = response
                     self.gc(state)
+                    state = {"result": response}
                 self.put_state(state)
             return response, self._fmt(msg)
         except Exception:

@@ -27,13 +27,14 @@ classifiers = [
 ]
 dependencies = [
   "boto3",
+  "psutil",
   "pyyaml",
 ]
 
 [project.optional-dependencies]
 dml = [
   "daggerml==0.0.33",
-  "daggerml-cli==0.0.27",
+  "daggerml-cli==0.0.28",
 ]
 nb = [
   "jupyter",
@@ -47,11 +48,10 @@ test = [
 ]
 
 [project.scripts]
-dml-util-lambda-adapter = "dml_util.adapter:Lambda.cli"
-dml-util-local-adapter = "dml_util.adapter:Local.cli"
+dml-util-lambda-adapter = "dml_util.adapter:LambdaAdapter.cli"
+dml-util-local-adapter = "dml_util.adapter:LocalAdapter.cli"
 dml-util-dag = "dml_util.dags:main"
-dml-util-config = "dml_util.baseutil:write_config"
-dml-ui = "dml_util.app:run"
+dml-ui = "dml_util.app.impl:run"
 
 [project.urls]
 Documentation = "https://github.com/daggerml/dml-util#readme"
@@ -115,6 +115,7 @@ dependencies = [
 [tool.hatch.envs.app]
 template = "default"
 features = ["dml", "app"]
+dependencies = []
 
 [tool.hatch.envs.test-all]
 template = "default"
@@ -125,6 +126,7 @@ python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 [tool.hatch.envs.test-baseutil]
 python="3.10"
 features = ["test"]
+dependencies = []
 
 [tool.hatch.envs.test-baseutil.env-vars]
 PYTHONDONTWRITEBYTECODE = "1"

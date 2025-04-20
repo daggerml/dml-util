@@ -1,4 +1,5 @@
 import getpass
+import json
 import os
 import shutil
 import socket
@@ -10,13 +11,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
 from unittest import skipIf
+from unittest.mock import patch
 
 import boto3
 from daggerml import Dml, Resource
 from daggerml.core import Error
 
+import dml_util.adapter as adapter
 from dml_util import S3Store, funk, funkify
 from dml_util.baseutil import S3_BUCKET, S3_PREFIX
+from dml_util.runner import DockerRunner
 from tests.test_baseutil import AwsTestCase
 
 try:
@@ -29,6 +33,16 @@ _root_ = Path(__file__).parent.parent
 # TODO: write unit tests for everything
 # TODO: Write a test-adapter that will write to a file and communicate via log messages
 
+# TODO: write a test for Batch(LambdaRunner)
+
+
+class Config:
+    def __init__(self, **kwargs):
+        self.__dict__.update(**kwargs)
+
+    def __getattr__(self, item):
+        return self.__dict__.get(item, None)
+
 
 class FullDmlTestCase(AwsTestCase):
     def setUp(self):
@@ -39,6 +53,7 @@ class FullDmlTestCase(AwsTestCase):
                 del os.environ[key]
         self.tmpd = TemporaryDirectory()
         os.environ["DML_FN_CACHE_DIR"] = self.tmpd.name
+        os.environ["DML_DEBUG"] = "1"
 
     def tearDown(self):
         s3 = S3Store()
@@ -82,7 +97,7 @@ class TestFunks(FullDmlTestCase):
                 assert d0.n1.value() == sum(vals)
                 dag = dml.load(d0.n1)
                 assert dag.result is not None
-            dag = dml("dag", "describe", dag._ref.to.split("/")[-1])
+            dag = dml("dag", "describe", dag._ref.to)
             logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
             assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
 
@@ -168,7 +183,7 @@ class TestFunks(FullDmlTestCase):
                     print("testing stdout...")
                     print("testing stderr...", file=sys.stderr)
 
-                    from dml_util.adapter import aws_fndag
+                    from dml_util import aws_fndag
 
                     if __name__ == "__main__":
                         with aws_fndag() as dag:
@@ -181,7 +196,7 @@ class TestFunks(FullDmlTestCase):
                 assert dag.n0.value() == sum(vals)
                 dag.result = dag.n0
             dag = dml.load(dag.n0)
-            dag = dml("dag", "describe", dag._ref.to.split("/")[-1])
+            dag = dml("dag", "describe", dag._ref.to)
             logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
             assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
 
@@ -279,11 +294,166 @@ class TestFunks(FullDmlTestCase):
             d0.result = d0.f1(*vals)
             assert d0.result.value() == {f"x{i}": i for i in vals}
 
+    def test_runner(self):
+        with TemporaryDirectory() as tmpd:
+            conf = Config(
+                uri="asdf:uri",
+                input=f"{tmpd}/input.dump",
+                output=f"{tmpd}/output.dump",
+                error=f"{tmpd}/error.dump",
+                n_iters=1,
+            )
+            with open(conf.input, "w") as f:
+                f.write("foo")
+            with patch.object(adapter.Adapter, "send_to_remote", return_value=({}, "testing0")):
+                status = adapter.Adapter.cli(conf)
+                assert status == 0
+                assert not os.path.exists(conf.output)
+                with open(conf.error, "r+") as f:
+                    assert f.read().strip() == "testing0"
+                os.truncate(conf.error, 0)
+            with patch.object(
+                adapter.Adapter,
+                "send_to_remote",
+                return_value=({"dump": "qwer"}, "testing1"),
+            ):
+                status = adapter.Adapter.cli(conf)
+                assert status == 0
+                with open(conf.output, "r") as f:
+                    assert f.read() == '{"dump": "qwer"}'
+                os.truncate(conf.output, 0)
+                with open(conf.error, "r") as f:
+                    assert f.read().strip() == "testing1"
+                os.truncate(conf.error, 0)
+
+    def test_runner_daemon(self):
+        with TemporaryDirectory() as tmpd:
+            conf = Config(
+                uri="asdf:uri",
+                input=f"{tmpd}/input.dump",
+                output=f"{tmpd}/output.dump",
+                error=f"{tmpd}/error.dump",
+                n_iters=-1,
+            )
+            with open(conf.input, "w") as f:
+                f.write("foo")
+            i = 0
+
+            def send_to_remote(uri, data):
+                nonlocal i
+                i += 1
+                if i < 3:
+                    return {}, "testing0"
+                return {"dump": "qwer"}, "testing1"
+
+            with patch.object(adapter.Adapter, "send_to_remote", new=send_to_remote):
+                status = adapter.Adapter.cli(conf)
+                assert status == 0
+                with open(conf.output, "r") as f:
+                    assert f.read() == '{"dump": "qwer"}'
+                with open(conf.error, "r") as f:
+                    assert f.read().strip() == "testing0\ntesting0\ntesting1"
+
+    def test_docker_patched(self):
+        data = {
+            "cache_key": "foo:key",
+            "kwargs": {
+                "sub": {"uri": "bar", "data": {}, "adapter": "baz"},
+                "image": {"uri": "foo:uri"},
+            },
+            "dump": "opaque",
+            "retry": False,
+        }
+        with TemporaryDirectory() as tmpd:
+            conf = Config(
+                uri="docker",
+                input=f"{tmpd}/input.dump",
+                output=f"{tmpd}/output.dump",
+                error=f"{tmpd}/error.dump",
+                n_iters=1,
+            )
+            with open(conf.input, "w") as f:
+                json.dump(data, f)
+            with patch.object(DockerRunner, "start_docker", return_value="testing0"):
+                status = adapter.LocalAdapter.cli(conf)
+                assert status == 0
+                assert not os.path.exists(conf.output)
+                with open(conf.error, "r") as f:
+                    assert f.read().strip() == "DockerRunner [foo:key] :: container testing0 started"
+                os.truncate(conf.error, 0)
+            sc = DockerRunner.state_class(data["cache_key"])
+            assert sc.get()["cid"] == "testing0"
+            docker_tmpd = Path(sc.get()["tmpd"])
+            with patch.object(DockerRunner, "get_docker_status", return_value="running"):
+                status = adapter.LocalAdapter.cli(conf)
+                assert status == 0
+                assert not os.path.exists(conf.output)
+                with open(conf.error, "r") as f:
+                    assert f.read().strip() == "DockerRunner [foo:key] :: container testing0 running"
+                os.truncate(conf.error, 0)
+            with patch.object(DockerRunner, "get_docker_status", return_value="exited"):
+                with open(docker_tmpd / DockerRunner._file_names[1], "w") as f:
+                    json.dump({"dump": "qwer"}, f)
+                status = adapter.LocalAdapter.cli(conf)
+                assert status == 0
+                with open(conf.error, "r") as f:
+                    assert (
+                        f.read().strip() == "DockerRunner [foo:key] :: container testing0 finished with status 'exited'"
+                    )
+                with open(conf.output, "r") as f:
+                    assert f.read().strip() == '{"dump": "qwer"}'
+            sc.delete()
+            os.remove(conf.output)
+            os.remove(conf.error)
+            with patch.object(DockerRunner, "start_docker", return_value="testing0"):
+                status = adapter.LocalAdapter.cli(conf)
+                assert status == 0
+                assert not os.path.exists(conf.output)
+                with open(conf.error, "r") as f:
+                    assert f.read().strip() == "DockerRunner [foo:key] :: container testing0 started"
+                os.truncate(conf.error, 0)
+            sc = DockerRunner.state_class(data["cache_key"])
+            docker_tmpd = Path(sc.get()["tmpd"])
+            with patch.object(DockerRunner, "get_docker_status", return_value="exited"):
+                with patch.object(DockerRunner, "get_docker_exit_code", return_value=1):
+                    with open(docker_tmpd / DockerRunner._file_names[2], "w") as f:
+                        f.write("testing stderr...")
+                    status = adapter.LocalAdapter.cli(conf)
+                    assert status == 1
+                    with open(conf.error, "r") as f:
+                        assert "testing stderr" in f.read()
+
+    def test_docker_patched2(self):
+        with TemporaryDirectory() as tmpd:
+
+            @funkify(uri="test", data={"image": Resource(tmpd)})
+            @funkify
+            def fn(dag):
+                import sys
+
+                print("testing stdout...")
+                print("testing stderr...", file=sys.stderr)
+                return sum(dag.argv[1:].value())
+
+            s3 = S3Store()
+            vals = [1, 2, 3]
+            with Dml() as dml:
+                dag = dml.new("test", "asdf")
+                dag.fn = fn
+                dag.n0 = dag.fn(*vals)
+                assert dag.n0.value() == sum(vals)
+                dag2 = dml.load(dag.n0)
+                assert dag2.result is not None
+                dag2 = dml("dag", "describe", dag2._ref.to)
+                logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
+                assert logs == {k: f"testing {k}..." for k in ["stdout", "stderr"]}
+
     @skipIf(docker is None, "docker not available")
     @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_docker_build(self):
-        from dml_util import dkr_build, funkify
+        from dml_util import funkify
 
+        @funkify
         def fn(dag):
             import sys
 
@@ -307,51 +477,64 @@ class TestFunks(FullDmlTestCase):
             text=True,
         ).stdout.strip()
         if host_ip:
-            print(f"{host_ip = !r}")
             flags.append(f"--add-host=host.docker.internal:{host_ip}")
-
         s3 = S3Store()
         vals = [1, 2, 3]
         with Dml() as dml:
-            with dml.new("test", "asdf") as dag:
-                dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
-                dag.dkr = dkr_build
-                dag.img = dag.dkr(
-                    dag.tar,
-                    [
-                        "--platform",
-                        "linux/amd64",
-                        "-f",
-                        "tests/assets/dkr-context/Dockerfile",
-                    ],
-                )
-                dag.fn0 = funkify(fn)
-                fn0 = dag.fn0.value()
-                # fn0 = Resource("test", fn0.data, fn0.adapter)
-                dag.fn = funkify(
-                    fn0,
-                    "docker",
-                    {"image": dag.img.value(), "flags": flags},
-                    adapter="local",
-                )
-                dag.baz = dag.fn(*vals)
-                assert dag.baz.value() == sum(vals)
-                dag2 = dml.load(dag.baz)
-                assert dag2.result is not None
-            dag2 = dml("dag", "describe", dag2._ref.to.split("/")[-1])
+            dag = dml.new("test", "asdf")
+            dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
+            # dag.dkr = dkr_build
+            # dag.img = dag.dkr(
+            #     dag.tar,
+            #     [
+            #         "--platform",
+            #         "linux/amd64",
+            #         "-f",
+            #         "tests/assets/dkr-context/Dockerfile",
+            #     ],
+            # )
+            # FIXME: fix this
+            from dml_util.lib import dkr
+
+            dag.img = dkr.dkr_build(
+                dag.tar.value().uri,
+                [
+                    "--platform",
+                    "linux/amd64",
+                    "-f",
+                    "tests/assets/dkr-context/Dockerfile",
+                ],
+            )["image"]
+            # dag.img = Resource(uri="dml:27b3ddb95fdc439a89f8a0a270f073ba", data=None, adapter=None)
+            assert isinstance(dag.img.value(), Resource)
+            dag.fn = funkify(
+                fn,
+                "docker",
+                {"image": dag.img.value(), "flags": flags},
+                adapter="local",
+            )
+            dag.baz = dag.fn(*vals)
+            assert dag.baz.value() == sum(vals)
+            dag2 = dml.load(dag.baz)
+            assert dag2.result is not None
+            dag2 = dml("dag", "describe", dag2._ref.to)
             logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
-            self.assertCountEqual(logs.keys(), ["stdout", "stderr", "docker/combined"])
+            self.assertCountEqual(logs.keys(), ["stdout", "stderr"])
             assert logs["stdout"] == "testing stdout..."
             assert logs["stderr"] == "testing stderr..."
 
     def test_notebooks(self):
         s3 = S3Store()
+        vals = [1, 2, 3, 4]
         with Dml() as dml:
             dag = dml.new("bar")
             dag.nb = s3.put(filepath=_root_ / "tests/assets/notebook.ipynb", suffix=".ipynb")
             dag.nb_exec = funk.execute_notebook
-            dag.html = dag.nb_exec(dag.nb)
+            dag.html = dag.nb_exec(dag.nb, *vals)
             dag.result = dag.html
+            html = s3.get(dag.result).decode().strip()
+            assert html.startswith("<!DOCTYPE html>")
+            assert f"Total sum = {sum(vals)}" in html
 
     def test_cfn(self):
         tpl = {
@@ -382,43 +565,35 @@ class TestFunks(FullDmlTestCase):
             dag.result = dag.stack
 
 
-# @skipIf(True, "ssh needs some work")
 class TestSSH(FullDmlTestCase):
     def setUp(self):
         super().setUp()
-        # Create a temporary directory for our files.
         self.tmpdir = tempfile.mkdtemp()
 
-        # Determine a free port on localhost.
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
         self.port = sock.getsockname()[1]
         sock.close()
 
-        # Generate the sshd host key.
         self.host_key_path = os.path.join(self.tmpdir, "ssh_host_rsa_key")
         subprocess.run(
             ["ssh-keygen", "-q", "-t", "rsa", "-N", "", "-f", self.host_key_path],
             check=True,
         )
 
-        # Generate a client key pair.
         self.client_key_path = os.path.join(self.tmpdir, "client_key")
         subprocess.run(
             ["ssh-keygen", "-q", "-t", "rsa", "-N", "", "-f", self.client_key_path],
             check=True,
         )
 
-        # Create an authorized_keys file using the client's public key.
         self.authorized_keys_path = os.path.join(self.tmpdir, "authorized_keys")
         client_pub_key_path = self.client_key_path + ".pub"
         shutil.copy(client_pub_key_path, self.authorized_keys_path)
         os.chmod(self.authorized_keys_path, 0o600)
 
-        # Get the current username (make sure this user exists on the system).
         self.user = getpass.getuser()
 
-        # Write a minimal sshd configuration file.
         self.sshd_config_path = os.path.join(self.tmpdir, "sshd_config")
         pid_file = os.path.join(self.tmpdir, "sshd.pid")
         with open(self.sshd_config_path, "w") as f:
@@ -442,7 +617,6 @@ class TestSSH(FullDmlTestCase):
                 ).strip()
             )
 
-        # Start sshd using the temporary configuration.
         self.sshd_proc = subprocess.Popen(
             [shutil.which("sshd"), "-f", self.sshd_config_path, "-D"],
             stdout=subprocess.PIPE,
@@ -464,10 +638,8 @@ class TestSSH(FullDmlTestCase):
             "flags": self.flags,
         }
 
-        # Wait until the server is ready by polling the port.
         deadline = time.time() + 5  # wait up to 5 seconds
         while time.time() < deadline:
-            # If sshd died, capture its output for debugging.
             if self.sshd_proc.poll() is not None:
                 stdout, stderr = self.sshd_proc.communicate(timeout=1)
                 raise RuntimeError(
@@ -484,14 +656,12 @@ class TestSSH(FullDmlTestCase):
         self.uri = f"{self.user}@127.0.0.1"
 
     def tearDown(self):
-        # Terminate the sshd process.
         if self.sshd_proc:
             self.sshd_proc.terminate()
             try:
                 self.sshd_proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.sshd_proc.kill()
-        # Clean up temporary files.
         shutil.rmtree(self.tmpdir)
         super().tearDown()
 
@@ -553,7 +723,6 @@ class TestSSH(FullDmlTestCase):
             text=True,
         ).stdout.strip()
         if host_ip:
-            print(f"{host_ip = !r}")
             flags.append(f"--add-host=host.docker.internal:{host_ip}")
 
         dkr_build_in_hatch = funkify(
@@ -596,8 +765,8 @@ class TestSSH(FullDmlTestCase):
                 assert dag.baz.value() == sum(vals)
                 dag2 = dml.load(dag.baz)
                 assert dag2.result is not None
-            dag2 = dml("dag", "describe", dag2._ref.to.split("/")[-1])
+            dag2 = dml("dag", "describe", dag2._ref.to)
             logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
-            self.assertCountEqual(logs.keys(), ["stdout", "stderr", "docker/combined"])
+            self.assertCountEqual(logs.keys(), ["stdout", "stderr"])
             assert logs["stdout"] == "testing stdout..."
             assert logs["stderr"] == "testing stderr..."

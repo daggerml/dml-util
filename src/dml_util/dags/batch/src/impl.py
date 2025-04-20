@@ -2,8 +2,9 @@ import json
 import logging
 import os
 
-from baseutil import LambdaRunner, get_client
 from botocore.exceptions import ClientError
+
+from dml_util.baseutil import LambdaRunner, get_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -16,10 +17,10 @@ FAILED_STATE = "FAILED"
 
 
 class Batch(LambdaRunner):
-    client = get_client("batch")
+    CLIENT = get_client("batch")
 
     def submit(self):
-        sub_uri, sub_kwargs, sub_adapter = self._to_data()
+        sub_uri, sub_kwargs, sub_adapter = self.sub_data()
         print(f"{sub_uri = }")
         print(f"{sub_kwargs = }")
         print(f"{sub_adapter = }")
@@ -30,7 +31,7 @@ class Batch(LambdaRunner):
         container_props.update(kw)
         needs_gpu = any(x["type"] == "GPU" for x in container_props.get("resourceRequirements", []))
         logger.info("createing job definition with name: %r", f"fn-{self.cache_key}")
-        response = self.client.register_job_definition(
+        response = self.CLIENT.register_job_definition(
             jobDefinitionName=f"fn-{self.cache_key}",
             type="container",
             containerProperties={
@@ -55,7 +56,7 @@ class Batch(LambdaRunner):
         )
         job_def = response["jobDefinitionArn"]
         logger.info("created job definition with arn: %r", job_def)
-        response = self.client.submit_job(
+        response = self.CLIENT.submit_job(
             jobName=f"fn-{self.cache_key}",
             jobQueue=GPU_QUEUE if needs_gpu else CPU_QUEUE,
             jobDefinition=job_def,
@@ -66,7 +67,7 @@ class Batch(LambdaRunner):
 
     def describe_job(self, state):
         job_id = state["job_id"]
-        response = self.client.describe_jobs(jobs=[job_id])
+        response = self.CLIENT.describe_jobs(jobs=[job_id])
         logger.info("Job %r (cache_key: %r) description: %r", job_id, self.cache_key, response)
         if len(response) == 0:
             return None, None
@@ -109,12 +110,12 @@ class Batch(LambdaRunner):
         if state is not None and len(state) > 0:
             job_id, status = self.describe_job(state)
             try:
-                self.client.cancel_job(jobId=job_id, reason="gc")
+                self.CLIENT.cancel_job(jobId=job_id, reason="gc")
             except ClientError:
                 pass
             job_def = state["job_def"]
             try:
-                self.client.deregister_job_definition(jobDefinition=job_def)
+                self.CLIENT.deregister_job_definition(jobDefinition=job_def)
                 logger.info("Successfully deregistered: %r", job_def)
                 return
             except ClientError as e:

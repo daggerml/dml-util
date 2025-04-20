@@ -1,10 +1,17 @@
+import logging
+import os
+from contextlib import contextmanager
 from functools import partial
 from inspect import getsource
 from textwrap import dedent
+from urllib.parse import urlparse
 
-from daggerml import Resource
+import boto3
+from daggerml import Dml, Resource
 
 from dml_util.adapter import Adapter
+
+logger = logging.getLogger(__name__)
 
 
 def _fnk(fn, extra_fns, extra_lines):
@@ -17,52 +24,17 @@ def _fnk(fn, extra_fns, extra_lines):
     tpl = dedent(
         """
         #!/usr/bin/env python3
-        import logging
-        import os
-        from urllib.parse import urlparse
-
-        from daggerml import Dml
-
-        logger = logging.getLogger(__name__)
+        from dml_util import aws_fndag
 
         {src}
 
         {eln}
 
-        def _get_data():
-            indata = os.environ["DML_INPUT_LOC"]
-            p = urlparse(indata)
-            if p.scheme == "s3":
-                import boto3
-                return (
-                    boto3.client("s3")
-                    .get_object(Bucket=p.netloc, Key=p.path[1:])
-                    ["Body"].read().decode()
-                )
-            with open(indata) as f:
-                return f.read()
-
-        def _handler(dump):
-            outdata = os.environ["DML_OUTPUT_LOC"]
-            p = urlparse(outdata)
-            if p.scheme == "s3":
-                import boto3
-                return (
-                    boto3.client("s3")
-                    .put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
-                )
-            with open(outdata, "w") as f:
-                f.write(dump)
-
         if __name__ == "__main__":
-            try:
-                with Dml() as dml:
-                    with dml.new(data=_get_data(), message_handler=_handler) as dag:
-                        res = {fn_name}(dag)
-                        if dag._ref is None:
-                            dag.result = res
-            except Exception:
-                logger.exception("{fn_name} failed with exception.")
+            with aws_fndag() as dag:
+                res = {fn_name}(dag)
+                if dag._ref is None:
+                    dag.result = res
         """
     ).strip()
     src = tpl.format(
@@ -176,3 +148,31 @@ def execute_notebook(dag):
         )
         dag.html = s3.put(filepath=f"{tmpd}/foo.html", suffix=".html")
     dag.result = dag.html
+
+
+@contextmanager
+def aws_fndag():
+    def _get_data():
+        indata = os.environ["DML_INPUT_LOC"]
+        p = urlparse(indata)
+        if p.scheme == "s3":
+            return boto3.client("s3").get_object(Bucket=p.netloc, Key=p.path[1:])["Body"].read().decode()
+        with open(indata) as f:
+            return f.read()
+
+    def _handler(dump):
+        outdata = os.environ["DML_OUTPUT_LOC"]
+        p = urlparse(outdata)
+        if p.scheme == "s3":
+            return boto3.client("s3").put_object(Bucket=p.netloc, Key=p.path[1:], Body=dump.encode())
+        with open(outdata, "w") as f:
+            f.write(dump)
+            f.flush()
+
+    with Dml() as dml:
+        _data = _get_data()
+        try:
+            with dml.new(data=_data, message_handler=_handler) as dag:
+                yield dag
+        except Exception:
+            logger.exception("AWS function failed with exception.")
