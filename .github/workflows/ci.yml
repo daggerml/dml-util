@@ -44,6 +44,8 @@ jobs:
       - name: pytest
         run: python -m pytest -m "not slow" .
     env:
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
       DML_S3_BUCKET: doesnotexist
       DML_S3_PREFIX: foopy
   lint:
