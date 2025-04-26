@@ -21,6 +21,7 @@ from daggerml.core import Error
 import dml_util.adapter as adapter
 from dml_util import S3Store, funk, funkify
 from dml_util.baseutil import S3_BUCKET, S3_PREFIX
+from dml_util.lib.dkr import Ecr
 from dml_util.runner import DockerRunner
 from tests.test_baseutil import AwsTestCase
 
@@ -511,12 +512,8 @@ class TestFunks(FullDmlTestCase):
                 logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
                 assert logs == {k: f"testing {k}..." for k in ["stdout", "stderr"]}
 
-    @skipIf(docker is None, "docker not available")
-    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
+    @skipIf(shutil.which("docker") is None, "docker not available")
     def test_docker_build(self):
-        from dml_util import funkify
-        from dml_util.lib import dkr
-
         @funkify
         def fn(dag):
             import sys
@@ -547,8 +544,8 @@ class TestFunks(FullDmlTestCase):
         with Dml() as dml:
             dag = dml.new("test", "asdf")
             dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
-            dag.img = dkr.dkr_build(
-                dag.tar.value().uri,
+            dag.img = Ecr().build(
+                dag.tar.value(),
                 [
                     "--platform",
                     "linux/amd64",
@@ -747,7 +744,7 @@ class TestSSH(FullDmlTestCase):
     @skipIf(docker is None, "docker not available")
     @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_docker_build(self):
-        from dml_util import dkr_build, funkify
+        from dml_util import dkr_build
 
         def fn(dag):
             import sys

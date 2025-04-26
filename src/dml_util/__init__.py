@@ -1,6 +1,6 @@
 try:
     import dml_util.runner  # to `register`
-    from dml_util.funk import aws_fndag, dkr_build, dkr_push, funkify
+    from dml_util.funk import aws_fndag, dkr_build, funkify
 except ModuleNotFoundError:
     pass
 

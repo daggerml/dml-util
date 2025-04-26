@@ -62,7 +62,7 @@ def _run_cli(command, capture_output=True, check=True, **kw):
         if check:
             raise RuntimeError(msg)
         return
-    return result.stdout.strip()
+    return (result.stdout or "").strip()
 
 
 def if_read_file(path):
