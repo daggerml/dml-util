@@ -76,7 +76,10 @@ def proc_exists(pid):
         return False
     except PermissionError:
         pass
-    proc = psutil.Process(pid)
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return False
     return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
 
 
