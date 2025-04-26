@@ -41,7 +41,6 @@ nb = [
   "nbconvert",
 ]
 app = ["flask==3.1.0"]
-docker = ["docker==7.1.0"]
 test = [
   "pytest",
   "moto[all,server]",
@@ -93,7 +92,7 @@ dependencies = [
   "daggerml @ {root:uri}/submodules/python-lib",
   "daggerml_cli @ {root:uri}/submodules/python-lib/submodules/daggerml_cli",
 ]
-features = ["docker", "test", "nb"]
+features = ["test", "nb"]
 
 [tool.hatch.envs.default.scripts]
 test = 'pytest . {args}'

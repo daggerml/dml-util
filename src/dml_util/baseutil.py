@@ -53,10 +53,12 @@ def now():
     return time()
 
 
-def _run_cli(command, check=True, **kw):
-    result = subprocess.run(command, capture_output=True, text=True, check=False, **kw)
+def _run_cli(command, capture_output=True, check=True, **kw):
+    result = subprocess.run(command, capture_output=capture_output, text=True, check=False, **kw)
     if result.returncode != 0:
-        msg = f"_run_cli: {command}\n{result.returncode = }\n{result.stdout}\n\n{result.stderr}"
+        msg = f"_run_cli: {command}\n{result.returncode = }"
+        if capture_output:
+            msg += f"\n{result.stdout}\n\n{result.stderr}"
         if check:
             raise RuntimeError(msg)
         return
