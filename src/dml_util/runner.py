@@ -155,14 +155,17 @@ class Hatch(WrappedRunner):
 @LocalAdapter.register
 class Conda(WrappedRunner):
     @classmethod
-    def funkify(cls, name, sub, conda_loc="~/.local/conda", env=None):
+    def funkify(cls, name, sub, conda_loc=None, env=None):
+        if conda_loc is None:
+            conda_loc = str(Path(shutil.which("conda")).parent.parent)
+            logger.info(f"Using conda from {conda_loc}")
         script = [
             "#!/bin/bash",
             "set -e",
             "",
-            "export PATH=~/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             f"source {conda_loc}/etc/profile.d/conda.sh",
-            "",
+            "conda deactivate || echo 'no active conda environment to deactivate' >&2",
+            "echo 'deactivating hatch environments' >&2",
         ]
         if env is not None:
             for k, v in env.items():

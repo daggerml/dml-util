@@ -41,6 +41,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install .[nb,test] ./submodules/* hatch
+      - name: create conda env
+        run: |
+          conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
+          conda run -n dml-pandas pip install .[nb,test] ./submodules/*
       - name: which hatch
         run: which hatch
       - name: pytest

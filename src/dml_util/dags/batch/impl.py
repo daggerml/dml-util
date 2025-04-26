@@ -95,14 +95,11 @@ class Batch(LambdaRunner):
             js = self.s3.get_js("output.dump")
             logger.info("dump = %r", js)
             return state, msg, js
+        if not self.s3.exists("output.dump"):
+            msg = f"{msg} (no output found)"
         logger.info("file: %r does not exist", self.s3.name2uri("output.dump"))
-        msg = json.dumps(
-            {
-                "job_id": job_id,
-                "message": msg,
-                "status_reason": ("status is none" if status is None else self.job_desc["statusReason"]),
-            }
-        )
+        if "statusReason" in self.job_desc:
+            msg = f"{msg} (reason: {self.job_desc['statusReason']})"
         logger.info(msg)
         raise RuntimeError(f"{msg = }")
 

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import subprocess
+import traceback
 from dataclasses import dataclass, field
 from io import BytesIO
 from itertools import product
@@ -462,7 +463,8 @@ class LambdaRunner(Runner):
             status = 200 if response else 201
             return {"status": status, "response": response, "message": msg}
         except Exception as e:
-            return {"status": 400, "response": {}, "message": str(e)}
+            msg = f"Error in lambda: {e}\n\n{traceback.format_exc()}"
+            return {"status": 400, "response": {}, "message": msg}
 
     def gc(self, state):
         if self.s3.exists(self.output_loc):

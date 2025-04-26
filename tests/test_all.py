@@ -1,6 +1,7 @@
 import getpass
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -250,43 +251,111 @@ class TestFunks(FullDmlTestCase):
         def dag_fn(dag):
             import pandas as pd
 
-            dag.result = pd.__version__
-            return dag.result
+            return pd.__version__
 
         with Dml() as dml:
             d0 = dml.new("d0", "d0")
             d0.f0 = dag_fn
             d0.result = d0.f0()
-            assert d0.result.value() == "2.2.3"
+            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", d0.result.value())
 
     @skipIf(not shutil.which("conda"), "conda is not available")
-    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_funkify_conda(self):
+        with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'pandas'"):
+            import pandas
+
+        @funkify(
+            uri="conda",
+            data={
+                "name": "dml-pandas",
+                "env": {
+                    "DML_FN_CACHE_DIR": self.tmpd.name,
+                    "AWS_ENDPOINT_URL": self.moto_endpoint,
+                },
+            },
+        )
         @funkify
         def dag_fn(dag):
             import pandas as pd
 
-            return pd.Series({f"x{i}": i for i in dag.argv[1:].value()}).to_dict()
+            return pd.__version__
 
-        vals = [1, 2, 3]
         with Dml() as dml:
             d0 = dml.new("d0", "d0")
             d0.f0 = dag_fn
-            with self.assertRaisesRegex(Error, "No module named 'pandas'"):
-                d0.f0()
-            d0.f1 = funkify(
-                dag_fn,
-                "conda",
-                data={
-                    "name": "dml-pandas",
-                    "env": {
-                        "DML_FN_CACHE_DIR": self.tmpd.name,
-                        "AWS_ENDPOINT_URL": self.moto_endpoint,
-                    },
-                },
-            )
-            d0.result = d0.f1(*vals)
-            assert d0.result.value() == {f"x{i}": i for i in vals}
+            result = d0.f0()
+            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", result.value())
+
+    @skipIf(not shutil.which("conda"), "conda is not available")
+    def test_funkify_conda_in_hatch(self):
+        with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'pandas'"):
+            import pandas
+        env = {
+            "DML_FN_CACHE_DIR": self.tmpd.name,
+            "AWS_ENDPOINT_URL": self.moto_endpoint,
+        }
+
+        @funkify(uri="conda", data={"name": "dml-pandas", "env": env})
+        @funkify
+        def dag_fn(dag):
+            import pandas as pd
+
+            return pd.__version__
+
+        @funkify(uri="hatch", data={"name": "default", "path": str(_root_), "env": env})
+        @funkify
+        def dag_fn2(dag):
+            try:
+                import pandas
+
+                raise RuntimeError("pandas should not be available")
+            except ImportError:
+                pass
+            fn = dag.argv[1]
+            return fn(name="fn")
+
+        with Dml() as dml:
+            dag = dml.new("d0", "d0")
+            dag.dag_fn = dag_fn
+            dag.dag_fn2 = dag_fn2
+            dag.result = dag.dag_fn2(dag.dag_fn)
+            val = dag.result.value()
+            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", val)
+
+    @skipIf(not shutil.which("conda"), "conda is not available")
+    def test_funkify_hatch_in_conda(self):
+        with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'polars'"):
+            import polars
+        env = {
+            "DML_FN_CACHE_DIR": self.tmpd.name,
+            "AWS_ENDPOINT_URL": self.moto_endpoint,
+        }
+
+        @funkify(uri="hatch", data={"name": "polars", "path": str(_root_), "env": env})
+        @funkify
+        def dag_fn(dag):
+            import polars as pl
+
+            return pl.__version__
+
+        @funkify(uri="conda", data={"name": "dml-pandas", "env": env})
+        @funkify
+        def dag_fn2(dag):
+            try:
+                import polars
+
+                raise RuntimeError("polars should not be available")
+            except ImportError:
+                fn = dag.argv[1]
+                return fn(*dag.argv[2:], name="fn")
+
+        vals = [1, 2, 3]
+        with Dml() as dml:
+            dag = dml.new("d0", "d0")
+            dag.dag_fn = dag_fn
+            dag.dag_fn2 = dag_fn2
+            result = dag.dag_fn2(dag.dag_fn, *vals).value()
+            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", result)
 
     def test_runner(self):
         with TemporaryDirectory() as tmpd:

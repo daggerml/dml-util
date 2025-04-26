@@ -108,7 +108,7 @@ class LambdaAdapter(Adapter):
         if payload.get("status", 400) // 100 in [4, 5]:
             status = payload.get("status", 400)
             raise Error(
-                "lambda returned with bad status",
+                f"lambda returned with bad status: {status}\n{payload.get('message')}",
                 context=payload,
                 code=f"status:{status}",
             )

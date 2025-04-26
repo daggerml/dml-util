@@ -9,10 +9,6 @@ from dml_util.adapter import LambdaAdapter
 from dml_util.baseutil import get_client
 from tests.test_all import FullDmlTestCase
 
-try:
-    import docker  # noqa: F401
-except ImportError:
-    docker = None
 _root_ = Path(__file__).parent.parent
 
 
@@ -61,6 +57,10 @@ class TestDagBatch(FullDmlTestCase):
         os.environ["GPU_QUEUE"] = "bar"
         os.environ["BATCH_TASK_ROLE_ARN"] = "arn:aws:iam::123456789012:role/BatchTaskRole"
 
+    def tearDown(self):
+        self.dynamodb_client.delete_table(TableName=self.dynamodb_table)
+        super().tearDown()
+
     def test_lambda_adapter(self):
         resp = {"logs": "qwer"}
 
@@ -87,7 +87,7 @@ class TestDagBatch(FullDmlTestCase):
             assert json.loads(conf.output.read()) == resp
             assert conf.error.read() == "ok"
 
-    def test_aws_batch(self):
+    def test_pipes(self):
         from dml_util.dags.batch.impl import Batch
 
         data = {
@@ -148,13 +148,17 @@ class TestDagBatch(FullDmlTestCase):
             }
             bc = Batch(**data)
             bc.s3.put_js({"dump": "opaque"}, uri=bc.output_loc)
-            with patch.object(Batch.CLIENT, "describe_jobs", return_value=describe_result):
+            with (
+                patch.object(Batch.CLIENT, "describe_jobs", return_value=describe_result),
+                patch.object(Batch.CLIENT, "cancel_job", return_value=None),
+                patch.object(Batch.CLIENT, "deregister_job_definition", return_value=None),
+            ):
                 status = LambdaAdapter.cli(conf)
-                assert status == 0
                 assert conf.error.read() == f"Batch [foo:key] :: job_id = {job_id!r} SUCCEEDED"
+                assert status == 0
                 assert conf.output.read() != ""
 
-    def test_aws_batch_no_output(self):
+    def test_no_output(self):
         from dml_util.dags.batch.impl import Batch
 
         data = {
@@ -203,5 +207,8 @@ class TestDagBatch(FullDmlTestCase):
             with patch.object(Batch.CLIENT, "describe_jobs", return_value=describe_result):
                 status = LambdaAdapter.cli(conf)
                 assert status == 1
-                assert conf.error.read() == "lambda returned with bad status"
+                err = conf.error.read()
+                assert f"{job_id = }" in err
+                assert "SUCCEEDED" in err
+                assert "no output" in err
                 assert conf.output.read() == ""
