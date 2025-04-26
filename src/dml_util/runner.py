@@ -157,8 +157,8 @@ class Conda(WrappedRunner):
     @classmethod
     def funkify(cls, name, sub, conda_loc=None, env=None):
         if conda_loc is None:
-            conda_loc = str(Path(shutil.which("conda")).parent.parent)
-            logger.info(f"Using conda from {conda_loc}")
+            conda_loc = str(_run_cli(["conda", "info", "--base"]).strip())
+            logger.info("Using conda from %r", conda_loc)
         script = [
             "#!/bin/bash",
             "set -e",
