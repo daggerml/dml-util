@@ -85,7 +85,7 @@ def dkr_build(dag):
     from dml_util.lib.dkr import Ecr
 
     dag.info = Ecr().build(
-        dag.argv[1].value().uri,
+        dag.argv[1].value(),
         dag.argv[2].value() if len(dag.argv) > 2 else [],
         repo=dag.argv[3].value() if len(dag.argv) > 3 else None,
     )

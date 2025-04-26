@@ -59,7 +59,7 @@ class FullDmlTestCase(AwsTestCase):
         super().tearDown()
 
 
-class TestFunks(FullDmlTestCase):
+class TestTooling(FullDmlTestCase):
     def test_s3_uri(self):
         s3 = S3Store()
         raw = b"foo bar baz"
@@ -67,36 +67,6 @@ class TestFunks(FullDmlTestCase):
         assert resp.uri == f"s3://{S3_BUCKET}/{S3_PREFIX}/data/foo.txt"
         resp = s3.put(raw, uri=f"s3://{S3_BUCKET}/asdf/foo.txt")
         assert resp.uri == f"s3://{S3_BUCKET}/asdf/foo.txt"
-
-    def test_funkify(self):
-        def fn(*args):
-            return sum(args)
-
-        @funkify(extra_fns=[fn])
-        def dag_fn(dag):
-            import sys
-
-            print("testing stdout...")
-            print("testing stderr...", file=sys.stderr)
-            dag.result = fn(*dag.argv[1:].value())
-            return dag.result
-
-        s3 = S3Store()
-        with Dml() as dml:
-            vals = [1, 2, 3]
-            with dml.new("d0", "d0") as d0:
-                d0.f0 = dag_fn
-                d0.n0 = d0.f0(*vals)
-                assert d0.n0.value() == sum(vals)
-                # you can get the original back
-                d0.f1 = funkify(dag_fn.fn, extra_fns=[fn])
-                d0.n1 = d0.f1(*vals)
-                assert d0.n1.value() == sum(vals)
-                dag = dml.load(d0.n1)
-                assert dag.result is not None
-            dag = dml("dag", "describe", dag._ref.to)
-            logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
-            assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
 
     def test_executor_caching_success(self):
         @funkify
@@ -168,6 +138,96 @@ class TestFunks(FullDmlTestCase):
             err_msg1 = str(e.exception.message)
         assert err_msg0 != err_msg1
 
+    def test_runner(self):
+        with TemporaryDirectory() as tmpd:
+            conf = Config(
+                uri="asdf:uri",
+                input=f"{tmpd}/input.dump",
+                output=f"{tmpd}/output.dump",
+                error=f"{tmpd}/error.dump",
+                n_iters=1,
+            )
+            with open(conf.input, "w") as f:
+                f.write("foo")
+            with patch.object(adapter.Adapter, "send_to_remote", return_value=({}, "testing0")):
+                status = adapter.Adapter.cli(conf)
+                assert status == 0
+                assert not os.path.exists(conf.output)
+                with open(conf.error, "r+") as f:
+                    assert f.read().strip() == "testing0"
+                os.truncate(conf.error, 0)
+            with patch.object(
+                adapter.Adapter,
+                "send_to_remote",
+                return_value=({"dump": "qwer"}, "testing1"),
+            ):
+                status = adapter.Adapter.cli(conf)
+                assert status == 0
+                with open(conf.output, "r") as f:
+                    assert f.read() == '{"dump": "qwer"}'
+                os.truncate(conf.output, 0)
+                with open(conf.error, "r") as f:
+                    assert f.read().strip() == "testing1"
+                os.truncate(conf.error, 0)
+
+    def test_runner_daemon(self):
+        with TemporaryDirectory() as tmpd:
+            conf = Config(
+                uri="asdf:uri",
+                input=f"{tmpd}/input.dump",
+                output=f"{tmpd}/output.dump",
+                error=f"{tmpd}/error.dump",
+                n_iters=-1,
+            )
+            with open(conf.input, "w") as f:
+                f.write("foo")
+            i = 0
+
+            def send_to_remote(uri, data):
+                nonlocal i
+                i += 1
+                if i < 3:
+                    return {}, "testing0"
+                return {"dump": "qwer"}, "testing1"
+
+            with patch.object(adapter.Adapter, "send_to_remote", new=send_to_remote):
+                status = adapter.Adapter.cli(conf)
+                assert status == 0
+                with open(conf.output, "r") as f:
+                    assert f.read() == '{"dump": "qwer"}'
+                with open(conf.error, "r") as f:
+                    assert f.read().strip() == "testing0\ntesting0\ntesting1"
+
+    def test_funkify(self):
+        def fn(*args):
+            return sum(args)
+
+        @funkify(extra_fns=[fn])
+        def dag_fn(dag):
+            import sys
+
+            print("testing stdout...")
+            print("testing stderr...", file=sys.stderr)
+            dag.result = fn(*dag.argv[1:].value())
+            return dag.result
+
+        s3 = S3Store()
+        with Dml() as dml:
+            vals = [1, 2, 3]
+            with dml.new("d0", "d0") as d0:
+                d0.f0 = dag_fn
+                d0.n0 = d0.f0(*vals)
+                assert d0.n0.value() == sum(vals)
+                # you can get the original back
+                d0.f1 = funkify(dag_fn.fn, extra_fns=[fn])
+                d0.n1 = d0.f1(*vals)
+                assert d0.n1.value() == sum(vals)
+                dag = dml.load(d0.n1)
+                assert dag.result is not None
+            dag = dml("dag", "describe", dag._ref.to)
+            logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
+            assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
+
     def test_funkify_string(self):
         s3 = S3Store()
         with Dml() as dml:
@@ -235,8 +295,10 @@ class TestFunks(FullDmlTestCase):
             with self.assertRaisesRegex(Error, "division by zero"):
                 d0.n0 = d0.f0(1, 0)
 
+
+class TestFunks(FullDmlTestCase):
     @skipIf(not shutil.which("hatch"), "hatch is not available")
-    def test_funkify_hatch(self):
+    def test_hatch(self):
         @funkify(
             uri="hatch",
             data={
@@ -261,7 +323,7 @@ class TestFunks(FullDmlTestCase):
             assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", d0.result.value())
 
     @skipIf(not shutil.which("conda"), "conda is not available")
-    def test_funkify_conda(self):
+    def test_conda(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'pandas'"):
             import pandas  # noqa: F401
 
@@ -288,7 +350,8 @@ class TestFunks(FullDmlTestCase):
             assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", result.value())
 
     @skipIf(not shutil.which("conda"), "conda is not available")
-    def test_funkify_conda_in_hatch(self):
+    @skipIf(not shutil.which("hatch"), "hatch is not available")
+    def test_conda_in_hatch(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'pandas'"):
             import pandas  # noqa: F401
         env = {
@@ -324,7 +387,8 @@ class TestFunks(FullDmlTestCase):
             assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", val)
 
     @skipIf(not shutil.which("conda"), "conda is not available")
-    def test_funkify_hatch_in_conda(self):
+    @skipIf(not shutil.which("hatch"), "hatch is not available")
+    def test_hatch_in_conda(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'polars'"):
             import polars  # noqa: F401
         env = {
@@ -357,66 +421,6 @@ class TestFunks(FullDmlTestCase):
             dag.dag_fn2 = dag_fn2
             result = dag.dag_fn2(dag.dag_fn, *vals).value()
             assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", result)
-
-    def test_runner(self):
-        with TemporaryDirectory() as tmpd:
-            conf = Config(
-                uri="asdf:uri",
-                input=f"{tmpd}/input.dump",
-                output=f"{tmpd}/output.dump",
-                error=f"{tmpd}/error.dump",
-                n_iters=1,
-            )
-            with open(conf.input, "w") as f:
-                f.write("foo")
-            with patch.object(adapter.Adapter, "send_to_remote", return_value=({}, "testing0")):
-                status = adapter.Adapter.cli(conf)
-                assert status == 0
-                assert not os.path.exists(conf.output)
-                with open(conf.error, "r+") as f:
-                    assert f.read().strip() == "testing0"
-                os.truncate(conf.error, 0)
-            with patch.object(
-                adapter.Adapter,
-                "send_to_remote",
-                return_value=({"dump": "qwer"}, "testing1"),
-            ):
-                status = adapter.Adapter.cli(conf)
-                assert status == 0
-                with open(conf.output, "r") as f:
-                    assert f.read() == '{"dump": "qwer"}'
-                os.truncate(conf.output, 0)
-                with open(conf.error, "r") as f:
-                    assert f.read().strip() == "testing1"
-                os.truncate(conf.error, 0)
-
-    def test_runner_daemon(self):
-        with TemporaryDirectory() as tmpd:
-            conf = Config(
-                uri="asdf:uri",
-                input=f"{tmpd}/input.dump",
-                output=f"{tmpd}/output.dump",
-                error=f"{tmpd}/error.dump",
-                n_iters=-1,
-            )
-            with open(conf.input, "w") as f:
-                f.write("foo")
-            i = 0
-
-            def send_to_remote(uri, data):
-                nonlocal i
-                i += 1
-                if i < 3:
-                    return {}, "testing0"
-                return {"dump": "qwer"}, "testing1"
-
-            with patch.object(adapter.Adapter, "send_to_remote", new=send_to_remote):
-                status = adapter.Adapter.cli(conf)
-                assert status == 0
-                with open(conf.output, "r") as f:
-                    assert f.read() == '{"dump": "qwer"}'
-                with open(conf.error, "r") as f:
-                    assert f.read().strip() == "testing0\ntesting0\ntesting1"
 
     def test_docker_patched(self):
         data = {
@@ -512,7 +516,7 @@ class TestFunks(FullDmlTestCase):
                 logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
                 assert logs == {k: f"testing {k}..." for k in ["stdout", "stderr"]}
 
-    @skipIf(shutil.which("docker") is None, "docker not available")
+    @skipIf(not shutil.which("docker"), "docker not available")
     def test_docker_build(self):
         @funkify
         def fn(dag):
@@ -731,11 +735,10 @@ class TestSSH(FullDmlTestCase):
                 dag.ans = dag.fn(*vals)
                 assert dag.ans.value() == {f"x{i}": i for i in vals}
 
-    @skipIf(docker is None, "docker not available")
+    @skipIf(not shutil.which("docker"), "docker not available")
     @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_docker_build(self):
-        from dml_util import dkr_build
-
+        @funkify
         def fn(dag):
             import sys
 
@@ -746,29 +749,20 @@ class TestSSH(FullDmlTestCase):
         flags = [
             "--platform",
             "linux/amd64",
+            "--add-host=host.docker.internal:host-gateway",
             "-e",
             f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
-            "-p",
-            f"{self.moto_port}:{self.moto_port}",
         ]
-        host_ip = subprocess.run(
-            "ip route | awk '/default/ {print $3}'",
-            shell=True,
-            capture_output=True,
-            check=True,
-            text=True,
-        ).stdout.strip()
-        if host_ip:
-            flags.append(f"--add-host=host.docker.internal:{host_ip}")
 
         dkr_build_in_hatch = funkify(
-            dkr_build,
+            funk.dkr_build,
             "hatch",
             data={
-                "name": "pandas",
+                "name": "default",
                 "path": str(_root_),
                 "env": {
                     "DML_FN_CACHE_DIR": self.tmpd.name,
+                    "AWS_ENDPOINT_URL": self.moto_endpoint,
                     **self.aws_env,
                 },
             },
@@ -788,13 +782,27 @@ class TestSSH(FullDmlTestCase):
                         "tests/assets/dkr-context/Dockerfile",
                     ],
                 )
-                dag.fn0 = funkify(fn)
-                fn0 = dag.fn0.value()
                 dag.fn = funkify(
-                    fn0,
-                    "docker",
-                    {"image": dag.img.value(), "flags": flags},
-                    adapter="local",
+                    funkify(
+                        funkify(
+                            fn,
+                            "docker",
+                            {"image": dag.img.value(), "flags": flags},
+                            adapter="local",
+                        ),
+                        uri="hatch",
+                        data={
+                            "name": "default",
+                            "path": str(_root_),
+                            "env": {
+                                "DML_FN_CACHE_DIR": self.tmpd.name,
+                                "AWS_ENDPOINT_URL": self.moto_endpoint,
+                                **self.aws_env,
+                            },
+                        },
+                    ),
+                    uri="ssh",
+                    data=self.resource_data,
                 )
                 dag.baz = dag.fn(*vals)
                 assert dag.baz.value() == sum(vals)
