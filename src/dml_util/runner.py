@@ -301,6 +301,21 @@ class SshRunner(Runner):
         host = self.kwargs["host"]
         if self.kwargs["user"] is not None:
             host = self.kwargs["user"] + f"@{host}"
+        env = os.environ.copy()
+        boto_session = boto3.Session()
+        creds = boto_session.get_credentials()
+        env.update(
+            {
+                "AWS_ACCESS_KEY_ID": creds.access_key,
+                "AWS_SECRET_ACCESS_KEY": creds.secret_key,
+                "AWS_SESSION_TOKEN": creds.token,
+                "AWS_REGION": boto_session.region_name,
+                "AWS_DEFAULT_REGION": boto_session.region_name,
+            }
+        )
+        if "DML_DEBUG" in os.environ:
+            env["DML_DEBUG"] = os.environ["DML_DEBUG"]
+        user_cmd = [f"export {shlex.quote(k)}={shlex.quote(v)};" for k, v in env.items()] + list(user_cmd)
         cmd = ["ssh", *flags, host, " ".join(user_cmd)]
         resp = subprocess.run(
             cmd,
