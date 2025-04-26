@@ -262,7 +262,7 @@ class TestFunks(FullDmlTestCase):
     @skipIf(not shutil.which("conda"), "conda is not available")
     def test_funkify_conda(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'pandas'"):
-            import pandas
+            import pandas  # noqa: F401
 
         @funkify(
             uri="conda",
@@ -289,7 +289,7 @@ class TestFunks(FullDmlTestCase):
     @skipIf(not shutil.which("conda"), "conda is not available")
     def test_funkify_conda_in_hatch(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'pandas'"):
-            import pandas
+            import pandas  # noqa: F401
         env = {
             "DML_FN_CACHE_DIR": self.tmpd.name,
             "AWS_ENDPOINT_URL": self.moto_endpoint,
@@ -306,7 +306,7 @@ class TestFunks(FullDmlTestCase):
         @funkify
         def dag_fn2(dag):
             try:
-                import pandas
+                import pandas  # noqa: F401
 
                 raise RuntimeError("pandas should not be available")
             except ImportError:
@@ -325,7 +325,7 @@ class TestFunks(FullDmlTestCase):
     @skipIf(not shutil.which("conda"), "conda is not available")
     def test_funkify_hatch_in_conda(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'polars'"):
-            import polars
+            import polars  # noqa: F401
         env = {
             "DML_FN_CACHE_DIR": self.tmpd.name,
             "AWS_ENDPOINT_URL": self.moto_endpoint,
@@ -342,7 +342,7 @@ class TestFunks(FullDmlTestCase):
         @funkify
         def dag_fn2(dag):
             try:
-                import polars
+                import polars  # noqa: F401
 
                 raise RuntimeError("polars should not be available")
             except ImportError:
