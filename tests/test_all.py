@@ -715,7 +715,6 @@ class TestSSH(FullDmlTestCase):
         shutil.rmtree(self.tmpdir)
         super().tearDown()
 
-    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions is messed up")
     def test_ssh(self):
         @funkify(
             uri="ssh",
