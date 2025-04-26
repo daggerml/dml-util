@@ -736,7 +736,6 @@ class TestSSH(FullDmlTestCase):
                 assert dag.ans.value() == {f"x{i}": i for i in vals}
 
     @skipIf(not shutil.which("docker"), "docker not available")
-    @skipIf(os.getenv("GITHUB_ACTIONS"), "github actions + docker interaction")
     def test_docker_build(self):
         @funkify
         def fn(dag):
