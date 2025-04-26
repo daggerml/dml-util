@@ -525,20 +525,10 @@ class TestFunks(FullDmlTestCase):
         flags = [
             "--platform",
             "linux/amd64",
+            "--add-host=host.docker.internal:host-gateway",
             "-e",
             f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
-            "-p",
-            f"{self.moto_port}:{self.moto_port}",
         ]
-        host_ip = subprocess.run(
-            "ip route | awk '/default/ {print $3}'",
-            shell=True,
-            capture_output=True,
-            check=True,
-            text=True,
-        ).stdout.strip()
-        if host_ip:
-            flags.append(f"--add-host=host.docker.internal:{host_ip}")
         s3 = S3Store()
         vals = [1, 2, 3]
         with Dml() as dml:

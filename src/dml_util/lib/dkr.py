@@ -3,12 +3,16 @@ import base64
 import re
 from dataclasses import dataclass, field
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from daggerml import Node, Resource
 
 from dml_util.baseutil import _run_cli, get_client
+
+if TYPE_CHECKING:
+    import boto3  # noqa: F401
 
 
 @dataclass

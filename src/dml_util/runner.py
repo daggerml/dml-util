@@ -273,8 +273,7 @@ class DockerRunner(Runner):
         if "cid" in state:
             _run_cli(["docker", "rm", state["cid"]], check=False)
         if "tmpd" in state:
-            command = "rm -r {} || echo".format(shlex.quote(state["tmpd"]))
-            _run_cli(command, shell=True)
+            _run_cli(["rm", "-r", state["tmpd"]], check=False)
         super().gc(state)
 
 
