@@ -201,8 +201,7 @@ class DockerRunner(Runner):
     def get_docker_status(self, cid):
         return self._dkr("inspect", "-f", "{{.State.Status}}", cid, check=False) or "no-longer-exists"
 
-    @staticmethod
-    def get_docker_exit_code(cid):
+    def get_docker_exit_code(self, cid):
         return int(self._dkr("inspect", "-f", "{{.State.ExitCode}}", cid))
 
     def submit(self):

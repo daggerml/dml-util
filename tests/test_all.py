@@ -25,11 +25,6 @@ from dml_util.lib.dkr import Ecr
 from dml_util.runner import DockerRunner
 from tests.test_baseutil import AwsTestCase
 
-try:
-    import docker  # noqa: F401
-except ImportError:
-    docker = None
-
 _root_ = Path(__file__).parent.parent
 
 
@@ -752,7 +747,7 @@ class TestSSH(FullDmlTestCase):
             "-e",
             f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
         ]
-
+        dkr_path = os.path.dirname(shutil.which("docker"))
         dkr_build_in_hatch = funkify(
             funk.dkr_build,
             "hatch",
@@ -761,52 +756,50 @@ class TestSSH(FullDmlTestCase):
                 "path": str(_root_),
                 "env": {
                     "DML_FN_CACHE_DIR": self.tmpd.name,
-                    "AWS_ENDPOINT_URL": self.moto_endpoint,
-                    **self.aws_env,
+                    "PATH": f"{dkr_path}:$PATH",
                 },
             },
         )
         s3 = S3Store()
         vals = [1, 2, 3]
         with Dml() as dml:
-            with dml.new("test", "asdf") as dag:
-                dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
-                dag.dkr = funkify(dkr_build_in_hatch, uri="ssh", data=self.resource_data)
-                dag.img = dag.dkr(
-                    dag.tar,
-                    [
-                        "--platform",
-                        "linux/amd64",
-                        "-f",
-                        "tests/assets/dkr-context/Dockerfile",
-                    ],
-                )
-                dag.fn = funkify(
+            dag = dml.new("test", "asdf")
+            dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
+            dag.dkr = funkify(dkr_build_in_hatch, uri="ssh", data=self.resource_data)
+            dag.img = dag.dkr(
+                dag.tar,
+                [
+                    "--platform",
+                    "linux/amd64",
+                    "-f",
+                    "tests/assets/dkr-context/Dockerfile",
+                ],
+            )
+            dag.fn = funkify(
+                funkify(
                     funkify(
-                        funkify(
-                            fn,
-                            "docker",
-                            {"image": dag.img.value(), "flags": flags},
-                            adapter="local",
-                        ),
-                        uri="hatch",
-                        data={
-                            "name": "default",
-                            "path": str(_root_),
-                            "env": {
-                                "DML_FN_CACHE_DIR": self.tmpd.name,
-                                "AWS_ENDPOINT_URL": self.moto_endpoint,
-                                **self.aws_env,
-                            },
-                        },
+                        fn,
+                        "docker",
+                        {"image": dag.img.value(), "flags": flags},
+                        adapter="local",
                     ),
-                    uri="ssh",
-                    data=self.resource_data,
-                )
-                dag.baz = dag.fn(*vals)
-                assert dag.baz.value() == sum(vals)
-                dag2 = dml.load(dag.baz)
-                assert dag2.result is not None
+                    uri="hatch",
+                    data={
+                        "name": "default",
+                        "path": str(_root_),
+                        "env": {
+                            "DML_FN_CACHE_DIR": self.tmpd.name,
+                            "PATH": f"{dkr_path}:$PATH",
+                        },
+                    },
+                ),
+                uri="ssh",
+                data=self.resource_data,
+            )
+            dag.baz = dag.fn(*vals)
+            assert dag.baz.value() == sum(vals)
+            dag2 = dml.load(dag.baz)
+            assert dag2.result is not None
             dag2 = dml("dag", "describe", dag2._ref.to)
             logs = {k: s3.get(v).decode().strip() for k, v in dag2["logs"].items()}
             self.assertCountEqual(logs.keys(), ["stdout", "stderr"])
