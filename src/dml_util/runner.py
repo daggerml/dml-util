@@ -132,7 +132,7 @@ class WrappedRunner(Runner):
 
 
 @LocalAdapter.register
-class Hatch(WrappedRunner):
+class HatchRunner(WrappedRunner):
     @classmethod
     def funkify(cls, name, sub, env=None, path=None, hatch_path=None):
         if hatch_path is None:
@@ -141,7 +141,7 @@ class Hatch(WrappedRunner):
             "#!/bin/bash",
             "set -e",
             "",
-            f"export PATH={hatch_path}:~/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            f"export PATH={hatch_path}:$PATH",
         ]
         if env is not None:
             for k, v in env.items():
@@ -153,7 +153,7 @@ class Hatch(WrappedRunner):
 
 
 @LocalAdapter.register
-class Conda(WrappedRunner):
+class CondaRunner(WrappedRunner):
     @classmethod
     def funkify(cls, name, sub, conda_loc=None, env=None):
         if conda_loc is None:
@@ -180,24 +180,30 @@ class DockerRunner(Runner):
     _file_names = ("stdin.dump", "stdout.dump", "stderr.dump")
 
     @classmethod
-    def funkify(cls, image, sub, flags=None):
+    def funkify(cls, image, sub, docker_path=None, flags=None):
         return {
             "sub": sub,
             "image": image,
             "flags": flags or [],
+            "docker_path": docker_path,
         }
 
-    @staticmethod
-    def start_docker(flags, image_uri, *sub_cmd):
-        return _run_cli(["docker", "run", *flags, image_uri, *sub_cmd])
+    def _dkr(self, *args, **kwargs):
+        dkr = "docker"
+        if self.kwargs.get("docker_path"):
+            if os.path.exists(self.kwargs["docker_path"]):
+                dkr = os.path.join(self.kwargs["docker_path"], dkr)
+        return _run_cli([dkr, *args], **kwargs)
 
-    @staticmethod
-    def get_docker_status(cid):
-        return _run_cli(["docker", "inspect", "-f", "{{.State.Status}}", cid], check=False) or "no-longer-exists"
+    def start_docker(self, flags, image_uri, *sub_cmd):
+        return self._dkr("run", *flags, image_uri, *sub_cmd)
+
+    def get_docker_status(self, cid):
+        return self._dkr("inspect", "-f", "{{.State.Status}}", cid, check=False) or "no-longer-exists"
 
     @staticmethod
     def get_docker_exit_code(cid):
-        return int(_run_cli(["docker", "inspect", "-f", "{{.State.ExitCode}}", cid]))
+        return int(self._dkr("inspect", "-f", "{{.State.ExitCode}}", cid))
 
     def submit(self):
         session = boto3.Session()
@@ -300,7 +306,22 @@ class SshRunner(Runner):
         host = self.kwargs["host"]
         if self.kwargs["user"] is not None:
             host = self.kwargs["user"] + f"@{host}"
-        env = os.environ.copy()
+        resp = subprocess.run(
+            ["ssh", *flags, host, *user_cmd],
+            capture_output=True,
+            text=True,
+            check=False,
+            **kw,
+        )
+        if resp.returncode != 0:
+            msg = f"Ssh(code:{resp.returncode}) {user_cmd}\nSTDOUT\n{resp.stdout}\n\nSTDERR\n{resp.stderr}"
+            raise RuntimeError(msg)
+        stderr = resp.stderr.strip()
+        logger.debug(f"SSH STDERR: {stderr}")
+        return resp.stdout.strip(), stderr
+
+    def _envwrap(self, code):
+        env = self.env.copy()
         boto_session = boto3.Session()
         creds = boto_session.get_credentials()
         env.update(
@@ -314,21 +335,20 @@ class SshRunner(Runner):
         )
         if "DML_DEBUG" in os.environ:
             env["DML_DEBUG"] = os.environ["DML_DEBUG"]
-        user_cmd = [f"export {shlex.quote(k)}={shlex.quote(v)};" for k, v in env.items()] + list(user_cmd)
-        cmd = ["ssh", *flags, host, " ".join(user_cmd)]
-        resp = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-            **kw,
-        )
-        if resp.returncode != 0:
-            msg = f"Ssh {cmd}\n{resp.returncode = }\n{resp.stdout}\n\n{resp.stderr}"
-            raise RuntimeError(msg)
-        stderr = resp.stderr.strip()
-        logger.debug(f"SSH STDERR: {stderr}")
-        return resp.stdout.strip(), stderr
+        env_str = "\n".join([f"export {k}={shlex.quote(v)}" for k, v in env.items()])
+        script = dedent(
+            f"""
+            if [ -f ~/.bashrc ]; then
+                . ~/.bashrc
+            fi
+            if [ -f ~/.bash_profile ]; then
+                . ~/.bash_profile
+            fi
+            {env_str}
+            {code}
+            """
+        ).strip()
+        return script
 
     def run(self):
         sub_uri, sub_kwargs, sub_adapter = self.sub_data()
@@ -338,7 +358,7 @@ class SshRunner(Runner):
         tmpf, _ = self._run_cmd("mktemp", "-t", "dml.XXXXXX.sh")
         self._run_cmd("cat", ">", tmpf, input=script)
         self._run_cmd("chmod", "+x", tmpf)
-        stdout, stderr = self._run_cmd(tmpf, sub_adapter, sub_uri, input=sub_kwargs)
+        stdout, stderr = self._run_cmd(self._envwrap(tmpf), sub_adapter, sub_uri, input=sub_kwargs)
         stdout = json.loads(stdout or "{}")
         self._run_cmd("rm", tmpf)
         return stdout, stderr
