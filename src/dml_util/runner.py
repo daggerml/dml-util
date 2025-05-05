@@ -19,6 +19,22 @@ from dml_util.baseutil import Runner, S3Store, _run_cli, if_read_file, proc_exis
 logger = logging.getLogger(__name__)
 
 
+SCRIPT_TPL = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+# REPLACE THIS LINE
+
+# require exactly 2 args
+if [ "$#" -ne 2 ]; then
+  echo "Usage: echo data | $0 adapter uri" >&2
+  exit 1
+fi
+cmd=( "$@" )
+exec "${cmd[@]}"
+""".strip()
+
+
 @LocalAdapter.register
 class ScriptRunner(Runner):
     @classmethod
@@ -35,11 +51,13 @@ class ScriptRunner(Runner):
         with open(f"{tmpd}/input.dump", "w") as f:
             f.write(self.dump)
         env = dict(os.environ).copy()
+        env.update(self.env)
         env.update(
             {
                 "DML_INPUT_LOC": f"{tmpd}/input.dump",
                 "DML_OUTPUT_LOC": f"{tmpd}/output.dump",
-                **self.env,
+                "DML_S3_BUCKET": self.s3_bucket,
+                "DML_S3_PREFIX": f"{self.s3_prefix}/data",
             }
         )
         proc = subprocess.Popen(
@@ -104,13 +122,15 @@ class WrappedRunner(Runner):
                 f.write(script)
             subprocess.run(["chmod", "+x", f"{tmpd}/script"], check=True)
             cmd = [f"{tmpd}/script", sub_adapter, sub_uri]
+            env = os.environ.copy()
+            env.update(self.env)
             result = subprocess.run(
                 cmd,
                 input=sub_kwargs,
                 capture_output=True,
                 check=False,
                 text=True,
-                env=self.env,
+                env=env,
             )
         if result.returncode != 0:
             msg = "\n".join(
@@ -134,45 +154,42 @@ class WrappedRunner(Runner):
 @LocalAdapter.register
 class HatchRunner(WrappedRunner):
     @classmethod
-    def funkify(cls, name, sub, env=None, path=None, hatch_path=None):
+    def funkify(cls, name, sub, path=None, hatch_path=None):
         if hatch_path is None:
             hatch_path = str(Path(shutil.which("hatch")).parent)
-        script = [
-            "#!/bin/bash",
-            "set -e",
-            "",
-            f"export PATH={hatch_path}:$PATH",
-        ]
-        if env is not None:
-            for k, v in env.items():
-                script.append(f"export {k}={v}\n")
-        if path is not None:
-            script.append(f"cd {shlex.quote(path)}")
-        script.append(f"hatch -e {name} run $@")
-        return WrappedRunner.funkify("\n".join(script), sub)
+        cd_str = "" if path is None else f"cd {shlex.quote(path)}"
+        script = dedent(
+            f"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            export PATH={shlex.quote(hatch_path)}:$PATH
+            {cd_str}
+            hatch -e {name} run "$@"
+            """
+        ).strip()
+        return WrappedRunner.funkify(script, sub)
 
 
 @LocalAdapter.register
 class CondaRunner(WrappedRunner):
     @classmethod
-    def funkify(cls, name, sub, conda_loc=None, env=None):
+    def funkify(cls, name, sub, conda_loc=None):
         if conda_loc is None:
             conda_loc = str(_run_cli(["conda", "info", "--base"]).strip())
             logger.info("Using conda from %r", conda_loc)
-        script = [
-            "#!/bin/bash",
-            "set -e",
-            "",
-            f"source {conda_loc}/etc/profile.d/conda.sh",
-            "conda deactivate || echo 'no active conda environment to deactivate' >&2",
-            "echo 'deactivating hatch environments' >&2",
-        ]
-        if env is not None:
-            for k, v in env.items():
-                script.append(f"export {k}={v}\n")
-        script.append(f"conda activate {name}")
-        script.append("$@")
-        return WrappedRunner.funkify("\n".join(script), sub)
+        script = dedent(
+            f"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            source {shlex.quote(conda_loc)}/etc/profile.d/conda.sh
+            conda deactivate || echo 'no active conda environment to deactivate' >&2
+            conda activate {name} >&2
+            exec "$@"
+            """
+        ).strip()
+        return WrappedRunner.funkify(script, sub)
 
 
 @LocalAdapter.register
@@ -216,11 +233,14 @@ class DockerRunner(Runner):
             {
                 "AWS_ACCESS_KEY_ID": creds.access_key,
                 "AWS_SECRET_ACCESS_KEY": creds.secret_key,
+                "AWS_SESSION_TOKEN": creds.token,
+                "AWS_REGION": session.region_name,
+                "AWS_DEFAULT_REGION": session.region_name,
             }
         )
         if "DML_DEBUG" in os.environ:
             env["DML_DEBUG"] = os.environ["DML_DEBUG"]
-        env_flags = [("-e", f"{k}={v}") for k, v in env.items()]
+        env_flags = [("-e", f"{k}={v}") for k, v in self.env.items()]
         flags = [
             "-v",
             f"{tmpd}:{tmpd}",
@@ -285,33 +305,19 @@ class DockerRunner(Runner):
 @LocalAdapter.register
 class SshRunner(Runner):
     @classmethod
-    def funkify(cls, host, sub, port=None, user=None, keyfile=None, flags=None):
-        return {
-            "sub": sub,
-            "host": host,
-            "port": port,
-            "user": user,
-            "keyfile": keyfile,
-            "flags": flags or [],
-        }
+    def funkify(cls, host, sub, flags=None, env_files=None):
+        script = SCRIPT_TPL
+        if env_files is not None:
+            script = script.replace(
+                "REPLACE THIS LINE",
+                "\n".join(["ENV FILES HERE..."] + [f". {env_file}" for env_file in env_files]),
+            )
+        print("script", script)
+        return {"sub": sub, "host": host, "flags": flags or [], "script": script}
 
     def _run_cmd(self, *user_cmd, **kw):
-        flags = []
-        if self.kwargs["keyfile"]:
-            flags += ["-i", self.kwargs["keyfile"]]
-        if self.kwargs["port"]:
-            flags += ["-p", str(self.kwargs["port"])]
-        flags = [*flags, *self.kwargs["flags"]]
-        host = self.kwargs["host"]
-        if self.kwargs["user"] is not None:
-            host = self.kwargs["user"] + f"@{host}"
-        resp = subprocess.run(
-            ["ssh", *flags, host, *user_cmd],
-            capture_output=True,
-            text=True,
-            check=False,
-            **kw,
-        )
+        cmd = ["ssh", *self.kwargs["flags"], self.kwargs["host"], *user_cmd]
+        resp = subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
         if resp.returncode != 0:
             msg = f"Ssh(code:{resp.returncode}) {user_cmd}\nSTDOUT\n{resp.stdout}\n\nSTDERR\n{resp.stderr}"
             raise RuntimeError(msg)
@@ -319,45 +325,12 @@ class SshRunner(Runner):
         logger.debug(f"SSH STDERR: {stderr}")
         return resp.stdout.strip(), stderr
 
-    def _envwrap(self, code):
-        env = self.env.copy()
-        boto_session = boto3.Session()
-        creds = boto_session.get_credentials()
-        env.update(
-            {
-                "AWS_ACCESS_KEY_ID": creds.access_key,
-                "AWS_SECRET_ACCESS_KEY": creds.secret_key,
-                "AWS_SESSION_TOKEN": creds.token,
-                "AWS_REGION": boto_session.region_name,
-                "AWS_DEFAULT_REGION": boto_session.region_name,
-            }
-        )
-        if "DML_DEBUG" in os.environ:
-            env["DML_DEBUG"] = os.environ["DML_DEBUG"]
-        env_str = "\n".join([f"export {k}={shlex.quote(v)}" for k, v in env.items()])
-        script = dedent(
-            f"""
-            if [ -f ~/.bashrc ]; then
-                . ~/.bashrc
-            fi
-            if [ -f ~/.bash_profile ]; then
-                . ~/.bash_profile
-            fi
-            {env_str}
-            {code}
-            """
-        ).strip()
-        return script
-
     def run(self):
         sub_uri, sub_kwargs, sub_adapter = self.sub_data()
-        assert sub_adapter == LocalAdapter.ADAPTER
-        runner = LocalAdapter.RUNNERS[sub_uri](**json.loads(sub_kwargs))
-        script, sub_adapter, sub_uri, sub_kwargs = runner.get_script_and_args()
         tmpf, _ = self._run_cmd("mktemp", "-t", "dml.XXXXXX.sh")
-        self._run_cmd("cat", ">", tmpf, input=script)
+        self._run_cmd("cat", ">", tmpf, input=self.kwargs["script"])
         self._run_cmd("chmod", "+x", tmpf)
-        stdout, stderr = self._run_cmd(self._envwrap(tmpf), sub_adapter, sub_uri, input=sub_kwargs)
+        stdout, stderr = self._run_cmd(tmpf, sub_adapter, sub_uri, input=sub_kwargs)
         stdout = json.loads(stdout or "{}")
         self._run_cmd("rm", tmpf)
         return stdout, stderr

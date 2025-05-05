@@ -29,8 +29,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 5  # seconds
-S3_BUCKET = os.environ["DML_S3_BUCKET"]
-S3_PREFIX = os.environ["DML_S3_PREFIX"]
 
 
 def tree_map(predicate, fn, item):
@@ -115,20 +113,9 @@ def exactly_one(**kw):
 
 @dataclass
 class S3Store:
-    bucket: str = None
-    prefix: str = None
-    client: "any" = field(default_factory=lambda: boto3.client("s3"))
-
-    def __post_init__(self):
-        self.bucket = self.bucket or S3_BUCKET
-        self.prefix = self.prefix or f"{S3_PREFIX}/data"
-        if self.bucket is None or self.prefix is None:
-            raise ValueError("Cannot instantiate S3Store without bucket and prefix")
-
-    @staticmethod
-    def get_write_prefix():
-        cache_key = os.environ["DML_CACHE_KEY"]
-        return f"{S3_PREFIX}/runs/{cache_key}"
+    bucket: str = field(default_factory=lambda: os.getenv("DML_S3_BUCKET"))
+    prefix: str = field(default_factory=lambda: os.getenv("DML_S3_PREFIX"))
+    client: "boto3.client" = field(default_factory=lambda: get_client("s3"))
 
     def parse_uri(self, name_or_uri):
         if not isinstance(name_or_uri, str):
@@ -376,24 +363,20 @@ class Runner:
     dump: str
     retry: bool
     state: State = field(init=False)
+    s3_bucket: str = field(default_factory=lambda: os.getenv("DML_S3_BUCKET"))
+    s3_prefix: str = field(default_factory=lambda: os.getenv("DML_S3_PREFIX"))
     state_class = LocalState
 
     def __post_init__(self):
-        meta_kwargs = (self.kwargs or {}).get("dml_meta", {})
-        bucket = meta_kwargs.get("s3_bucket", S3_BUCKET)
-        prefix = meta_kwargs.get("s3_prefix", S3_PREFIX)
         clsname = type(self).__name__
         self.state = self.state_class(self.cache_key)
-        self.prefix = f"{prefix}/exec/{clsname.lower()}"
+        self.prefix = f"{self.s3_prefix}/exec/{clsname.lower()}"
         self.env = {
-            "DML_S3_BUCKET": bucket,
-            "DML_S3_PREFIX": prefix,
+            "DML_S3_BUCKET": self.s3_bucket,
+            "DML_S3_PREFIX": self.s3_prefix,
             "DML_CACHE_KEY": self.cache_key,
-            "DML_WRITE_LOC": f"s3://{bucket}/{self.prefix}/data/{self.cache_key}",
+            "DML_WRITE_LOC": f"s3://{self.s3_bucket}/{self.prefix}/data/{self.cache_key}",
         }
-        self.env.update({k: v for k, v in os.environ.items() if k.startswith("AWS_")})
-        if "DML_FN_CACHE_DIR" in os.environ:
-            self.env["DML_FN_CACHE_DIR"] = os.environ["DML_FN_CACHE_DIR"]
 
     def sub_data(self):
         sub = self.kwargs["sub"]
@@ -402,6 +385,8 @@ class Runner:
             "kwargs": sub["data"],
             "dump": self.dump,
             "retry": self.retry,
+            "s3_bucket": self.s3_bucket,
+            "s3_prefix": self.s3_prefix,
         }
         return sub["uri"], json.dumps(ks), sub["adapter"]
 

@@ -4,7 +4,7 @@ try:
 except ModuleNotFoundError:
     pass
 
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX, S3Store, dict_product
+from dml_util.baseutil import S3Store, dict_product
 
 try:
     from dml_util.__about__ import __version__

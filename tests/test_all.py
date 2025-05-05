@@ -2,14 +2,15 @@ import getpass
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
-import tempfile
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from textwrap import dedent
 from unittest import skipIf
 from unittest.mock import patch
@@ -20,12 +21,14 @@ from daggerml.core import Error
 
 import dml_util.adapter as adapter
 from dml_util import S3Store, funk, funkify
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX
 from dml_util.lib.dkr import Ecr
 from dml_util.runner import DockerRunner
 from tests.test_baseutil import AwsTestCase
 
 _root_ = Path(__file__).parent.parent
+VALID_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+")
+S3_BUCKET = os.getenv("DML_S3_BUCKET")
+S3_PREFIX = os.getenv("DML_S3_PREFIX")
 
 
 class Config:
@@ -59,7 +62,7 @@ class TestTooling(FullDmlTestCase):
         s3 = S3Store()
         raw = b"foo bar baz"
         resp = s3.put(raw, name="foo.txt")
-        assert resp.uri == f"s3://{S3_BUCKET}/{S3_PREFIX}/data/foo.txt"
+        assert resp.uri == f"s3://{S3_BUCKET}/{S3_PREFIX}/foo.txt"
         resp = s3.put(raw, uri=f"s3://{S3_BUCKET}/asdf/foo.txt")
         assert resp.uri == f"s3://{S3_BUCKET}/asdf/foo.txt"
 
@@ -296,14 +299,7 @@ class TestFunks(FullDmlTestCase):
     def test_hatch(self):
         @funkify(
             uri="hatch",
-            data={
-                "name": "pandas",
-                "path": str(_root_),
-                "env": {
-                    "DML_FN_CACHE_DIR": self.tmpd.name,
-                    "AWS_ENDPOINT_URL": self.moto_endpoint,
-                },
-            },
+            data={"name": "pandas", "path": str(_root_)},
         )
         @funkify
         def dag_fn(dag):
@@ -315,7 +311,7 @@ class TestFunks(FullDmlTestCase):
             d0 = dml.new("d0", "d0")
             d0.f0 = dag_fn
             d0.result = d0.f0()
-            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", d0.result.value())
+            assert VALID_VERSION.match(d0.result.value())
 
     @skipIf(not shutil.which("conda"), "conda is not available")
     def test_conda(self):
@@ -324,13 +320,7 @@ class TestFunks(FullDmlTestCase):
 
         @funkify(
             uri="conda",
-            data={
-                "name": "dml-pandas",
-                "env": {
-                    "DML_FN_CACHE_DIR": self.tmpd.name,
-                    "AWS_ENDPOINT_URL": self.moto_endpoint,
-                },
-            },
+            data={"name": "dml-pandas"},
         )
         @funkify
         def dag_fn(dag):
@@ -342,26 +332,22 @@ class TestFunks(FullDmlTestCase):
             d0 = dml.new("d0", "d0")
             d0.f0 = dag_fn
             result = d0.f0()
-            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", result.value())
+            assert VALID_VERSION.match(result.value())
 
     @skipIf(not shutil.which("conda"), "conda is not available")
     @skipIf(not shutil.which("hatch"), "hatch is not available")
     def test_conda_in_hatch(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'pandas'"):
             import pandas  # noqa: F401
-        env = {
-            "DML_FN_CACHE_DIR": self.tmpd.name,
-            "AWS_ENDPOINT_URL": self.moto_endpoint,
-        }
 
-        @funkify(uri="conda", data={"name": "dml-pandas", "env": env})
+        @funkify(uri="conda", data={"name": "dml-pandas"})
         @funkify
         def dag_fn(dag):
             import pandas as pd
 
             return pd.__version__
 
-        @funkify(uri="hatch", data={"name": "default", "path": str(_root_), "env": env})
+        @funkify(uri="hatch", data={"name": "default", "path": str(_root_)})
         @funkify
         def dag_fn2(dag):
             try:
@@ -378,27 +364,22 @@ class TestFunks(FullDmlTestCase):
             dag.dag_fn = dag_fn
             dag.dag_fn2 = dag_fn2
             dag.result = dag.dag_fn2(dag.dag_fn)
-            val = dag.result.value()
-            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", val)
+            assert VALID_VERSION.match(dag.result.value())
 
     @skipIf(not shutil.which("conda"), "conda is not available")
     @skipIf(not shutil.which("hatch"), "hatch is not available")
     def test_hatch_in_conda(self):
         with self.assertRaisesRegex(ModuleNotFoundError, "No module named 'polars'"):
             import polars  # noqa: F401
-        env = {
-            "DML_FN_CACHE_DIR": self.tmpd.name,
-            "AWS_ENDPOINT_URL": self.moto_endpoint,
-        }
 
-        @funkify(uri="hatch", data={"name": "polars", "path": str(_root_), "env": env})
+        @funkify(uri="hatch", data={"name": "polars", "path": str(_root_)})
         @funkify
         def dag_fn(dag):
             import polars as pl
 
             return pl.__version__
 
-        @funkify(uri="conda", data={"name": "dml-pandas", "env": env})
+        @funkify(uri="conda", data={"name": "dml-pandas"})
         @funkify
         def dag_fn2(dag):
             try:
@@ -415,7 +396,7 @@ class TestFunks(FullDmlTestCase):
             dag.dag_fn = dag_fn
             dag.dag_fn2 = dag_fn2
             result = dag.dag_fn2(dag.dag_fn, *vals).value()
-            assert re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", result)
+            assert VALID_VERSION.match(result)
 
     def test_docker_patched(self):
         data = {
@@ -521,12 +502,23 @@ class TestFunks(FullDmlTestCase):
             print("testing stderr...", file=sys.stderr)
             dag.result = sum(dag.argv[1:].value())
 
+        with open(f"{self.tmpd.name}/credentials", "w") as f:
+            f.write("[default]\n")
+            f.write(f"aws_access_key_id={self.aws_env['AWS_ACCESS_KEY_ID']}\n")
+            f.write(f"aws_secret_access_key={self.aws_env['AWS_SECRET_ACCESS_KEY']}\n")
+        with open(f"{self.tmpd.name}/config", "w") as f:
+            f.write("[default]\n")
+            f.write(f"region={self.aws_env['AWS_DEFAULT_REGION']}\n")
         flags = [
             "--platform",
             "linux/amd64",
             "--add-host=host.docker.internal:host-gateway",
             "-e",
             f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
+            "-v",
+            f"{shlex.quote(self.tmpd.name)}/credentials:/root/.aws/credentials:ro",
+            "-v",
+            f"{shlex.quote(self.tmpd.name)}/config:/root/.aws/config:ro",
         ]
         s3 = S3Store()
         vals = [1, 2, 3]
@@ -604,41 +596,39 @@ class TestFunks(FullDmlTestCase):
 class TestSSH(FullDmlTestCase):
     def setUp(self):
         super().setUp()
-        self.tmpdir = tempfile.mkdtemp()
+        self.tmpdir = mkdtemp()
+        self.fn_cache_dir = mkdtemp()
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
-        self.port = sock.getsockname()[1]
+        port = sock.getsockname()[1]
         sock.close()
 
-        self.host_key_path = os.path.join(self.tmpdir, "ssh_host_rsa_key")
+        host_key_path = os.path.join(self.tmpdir, "ssh_host_rsa_key")
         subprocess.run(
-            ["ssh-keygen", "-q", "-t", "rsa", "-N", "", "-f", self.host_key_path],
+            ["ssh-keygen", "-q", "-t", "rsa", "-N", "", "-f", host_key_path],
             check=True,
         )
 
-        self.client_key_path = os.path.join(self.tmpdir, "client_key")
+        client_key_path = os.path.join(self.tmpdir, "client_key")
         subprocess.run(
-            ["ssh-keygen", "-q", "-t", "rsa", "-N", "", "-f", self.client_key_path],
+            ["ssh-keygen", "-q", "-t", "rsa", "-N", "", "-f", client_key_path],
             check=True,
         )
 
-        self.authorized_keys_path = os.path.join(self.tmpdir, "authorized_keys")
-        client_pub_key_path = self.client_key_path + ".pub"
-        shutil.copy(client_pub_key_path, self.authorized_keys_path)
-        os.chmod(self.authorized_keys_path, 0o600)
-
-        self.user = getpass.getuser()
-
-        self.sshd_config_path = os.path.join(self.tmpdir, "sshd_config")
+        authorized_keys_path = os.path.join(self.tmpdir, "authorized_keys")
+        client_pub_key_path = client_key_path + ".pub"
+        shutil.copy(client_pub_key_path, authorized_keys_path)
+        os.chmod(authorized_keys_path, 0o600)
+        sshd_config_path = os.path.join(self.tmpdir, "sshd_config")
         pid_file = os.path.join(self.tmpdir, "sshd.pid")
-        with open(self.sshd_config_path, "w") as f:
+        with open(sshd_config_path, "w") as f:
             f.write(
                 dedent(
                     f"""
-                    Port {self.port}
+                    Port {port}
                     ListenAddress 127.0.0.1
-                    HostKey {self.host_key_path}
+                    HostKey {host_key_path}
                     PidFile {pid_file}
                     LogLevel DEBUG
                     UsePrivilegeSeparation no
@@ -646,7 +636,7 @@ class TestSSH(FullDmlTestCase):
                     PasswordAuthentication no
                     ChallengeResponseAuthentication no
                     PubkeyAuthentication yes
-                    AuthorizedKeysFile {self.authorized_keys_path}
+                    AuthorizedKeysFile {authorized_keys_path}
                     UsePAM no
                     Subsystem sftp internal-sftp
                     """
@@ -654,24 +644,37 @@ class TestSSH(FullDmlTestCase):
             )
 
         self.sshd_proc = subprocess.Popen(
-            [shutil.which("sshd"), "-f", self.sshd_config_path, "-D"],
+            [shutil.which("sshd"), "-f", sshd_config_path, "-D"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
         self.flags = [
             "-i",
-            self.client_key_path,
+            client_key_path,
             "-p",
-            str(self.port),
+            str(port),
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
             "UserKnownHostsFile=/dev/null",
         ]
+        self.env_file = os.path.join(self.tmpdir, "env_file")
+        with open(self.env_file, "w") as f:
+            f.write(
+                dedent(
+                    f"""
+                    export DML_FN_CACHE_DIR={self.fn_cache_dir}
+                    export PATH={shlex.quote(str(Path(sys.executable).parent))}:$PATH
+                    export PATH={shlex.quote(os.path.dirname(shutil.which("docker")))}:$PATH
+                    """
+                ).strip()
+            )
+            for k, v in self.aws_env.items():
+                f.write(f"\nexport {k}={v}")
         self.resource_data = {
-            "user": self.user,
-            "host": "127.0.0.1",
+            "host": f"{getpass.getuser()}@127.0.0.1",
             "flags": self.flags,
+            "env_files": [self.env_file],
         }
 
         deadline = time.time() + 5  # wait up to 5 seconds
@@ -682,14 +685,13 @@ class TestSSH(FullDmlTestCase):
                     f"sshd terminated unexpectedly.\nstdout: {stdout.decode()}\nstderr: {stderr.decode()}"
                 )
             try:
-                test_sock = socket.create_connection(("127.0.0.1", self.port), timeout=0.5)
+                test_sock = socket.create_connection(("127.0.0.1", port), timeout=0.5)
                 test_sock.close()
                 break
             except (ConnectionRefusedError, OSError):
                 time.sleep(0.5)
         else:
             raise RuntimeError("Timeout waiting for sshd to start.")
-        self.uri = f"{self.user}@127.0.0.1"
 
     def tearDown(self):
         if self.sshd_proc:
@@ -699,36 +701,34 @@ class TestSSH(FullDmlTestCase):
             except subprocess.TimeoutExpired:
                 self.sshd_proc.kill()
         shutil.rmtree(self.tmpdir)
+        shutil.rmtree(self.fn_cache_dir)
         super().tearDown()
 
     def test_ssh(self):
-        @funkify(
-            uri="ssh",
-            data=self.resource_data,
-        )
-        @funkify(
-            uri="hatch",
-            data={
-                "name": "pandas",
-                "path": str(_root_),
-                "env": {
-                    "DML_FN_CACHE_DIR": self.tmpd.name,
-                    "AWS_ENDPOINT_URL": self.moto_endpoint,
-                },
-            },
-        )
+        s3 = S3Store()
+
+        @funkify(uri="ssh", data=self.resource_data)
+        @funkify(uri="hatch", data={"name": "pandas", "path": str(_root_)})
         @funkify
         def fn(dag):
+            import sys
+
             import pandas as pd
 
-            return pd.Series({f"x{i}": i for i in dag.argv[1:].value()}).to_dict()
+            print("testing stdout...")
+            print("testing stderr...", file=sys.stderr)
+            return pd.__version__
 
-        vals = [1, 2, 3]
         with Dml() as dml:
             with dml.new("test", "asdf") as dag:
                 dag.fn = fn
-                dag.ans = dag.fn(*vals)
-                assert dag.ans.value() == {f"x{i}": i for i in vals}
+                res = dag.fn()
+                assert VALID_VERSION.match(res.value())
+                dag2 = dml.load(res)
+                assert dag2.result is not None
+            dag = dml("dag", "describe", dag2._ref.to)
+            logs = {k: s3.get(v).decode().strip() for k, v in dag["logs"].items()}
+            assert logs == {x: f"testing {x}..." for x in ["stdout", "stderr"]}
 
     @skipIf(not shutil.which("docker"), "docker not available")
     def test_docker_build(self):
@@ -740,26 +740,25 @@ class TestSSH(FullDmlTestCase):
             print("testing stderr...", file=sys.stderr)
             dag.result = sum(dag.argv[1:].value())
 
+        with open(f"{self.tmpd.name}/credentials", "w") as f:
+            f.write("[default]\n")
+            f.write(f"aws_access_key_id={self.aws_env['AWS_ACCESS_KEY_ID']}\n")
+            f.write(f"aws_secret_access_key={self.aws_env['AWS_SECRET_ACCESS_KEY']}\n")
+        with open(f"{self.tmpd.name}/config", "w") as f:
+            f.write("[default]\n")
+            f.write(f"region={self.aws_env['AWS_DEFAULT_REGION']}\n")
         flags = [
             "--platform",
             "linux/amd64",
             "--add-host=host.docker.internal:host-gateway",
             "-e",
             f"AWS_ENDPOINT_URL=http://host.docker.internal:{self.moto_port}",
+            "-v",
+            f"{shlex.quote(self.tmpd.name)}/credentials:/root/.aws/credentials:ro",
+            "-v",
+            f"{shlex.quote(self.tmpd.name)}/config:/root/.aws/config:ro",
         ]
-        dkr_path = os.path.dirname(shutil.which("docker"))
-        dkr_build_in_hatch = funkify(
-            funk.dkr_build,
-            "hatch",
-            data={
-                "name": "default",
-                "path": str(_root_),
-                "env": {
-                    "DML_FN_CACHE_DIR": self.tmpd.name,
-                    "PATH": f"{dkr_path}:$PATH",
-                },
-            },
-        )
+        dkr_build_in_hatch = funkify(funk.dkr_build, "hatch", data={"name": "default", "path": str(_root_)})
         s3 = S3Store()
         vals = [1, 2, 3]
         with Dml() as dml:
@@ -784,14 +783,7 @@ class TestSSH(FullDmlTestCase):
                         adapter="local",
                     ),
                     uri="hatch",
-                    data={
-                        "name": "default",
-                        "path": str(_root_),
-                        "env": {
-                            "DML_FN_CACHE_DIR": self.tmpd.name,
-                            "PATH": f"{dkr_path}:$PATH",
-                        },
-                    },
+                    data={"name": "default", "path": str(_root_)},
                 ),
                 uri="ssh",
                 data=self.resource_data,

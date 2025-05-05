@@ -9,19 +9,17 @@ from unittest import TestCase, skipIf
 import boto3
 
 from dml_util import S3Store
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX, DynamoState, dict_product
+from dml_util.baseutil import DynamoState, dict_product
 
 _root_ = Path(__file__).parent.parent
-
-try:
-    import docker  # noqa: F401
-except ImportError:
-    docker = None
 
 try:
     from daggerml.core import Dml
 except ImportError:
     Dml = None
+
+S3_BUCKET = "does-not-exist"
+S3_PREFIX = "foopy/barple"
 
 
 def rel_to(x, rel):
@@ -47,16 +45,15 @@ class AwsTestCase(TestCase):
         self.server.start()
         self.moto_host, self.moto_port = self.server._server.server_address
         self.moto_endpoint = f"http://{self.moto_host}:{self.moto_port}"
-        aws_env = {
+        self.aws_env = {
             "AWS_ACCESS_KEY_ID": "foo",
             "AWS_SECRET_ACCESS_KEY": "foo",
             "AWS_REGION": self.region,
             "AWS_DEFAULT_REGION": self.region,
             "AWS_ENDPOINT_URL": self.moto_endpoint,
         }
-        for k, v in aws_env.items():
+        for k, v in self.aws_env.items():
             os.environ[k] = v
-        self.aws_env = aws_env
 
     def tearDown(self):
         self.server.stop()
@@ -94,9 +91,9 @@ class TestS3(AwsTestCase):
     @skipIf(Dml is None, "Dml not available")
     def test_tar(self):
         context = _root_ / "tests/assets/dkr-context"
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         assert s3.bucket == S3_BUCKET
-        assert s3.prefix.startswith(f"{S3_PREFIX}/")
+        assert s3.prefix.startswith(S3_PREFIX)
         with Dml() as dml:
             s3_tar = s3.tar(dml, context)
             with TemporaryDirectory() as tmpd:
