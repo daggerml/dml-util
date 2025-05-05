@@ -66,7 +66,7 @@ class TestS3(AwsTestCase):
         boto3.client("s3", endpoint_url=self.moto_endpoint).create_bucket(Bucket=S3_BUCKET)
 
     def test_js(self):
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         js = {"asdf": "wef", "as": [32, True]}
         resp = s3.put_js(js)
         if not isinstance(resp, str):
@@ -75,7 +75,7 @@ class TestS3(AwsTestCase):
         assert js == js2
 
     def test_ls(self):
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         assert s3.ls(recursive=True) == []
         keys = ["a", "b/c", "b/d", "b/d/e", "f"]
         for key in keys:
@@ -104,7 +104,7 @@ class TestS3(AwsTestCase):
             assert s3_tar.uri == s3_tar2.uri
 
     def tearDown(self):
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         s3.rm(*s3.ls(recursive=True))
         super().tearDown()
 
