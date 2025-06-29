@@ -207,7 +207,7 @@
         },
         "Policies": [
           {
-            "PolicyName": "S3Access",
+            "PolicyName": { "Fn::Sub": "${AWS::StackName}-S3Access" },
             "PolicyDocument": {
               "Version": "2012-10-17",
               "Statement": [
@@ -252,7 +252,7 @@
         ],
         "Policies": [
           {
-            "PolicyName": "BatchAndS3Access",
+            "PolicyName": { "Fn::Sub": "${AWS::StackName}-BatchAndS3Access" },
             "PolicyDocument": {
               "Version": "2012-10-17",
               "Statement": [
@@ -434,7 +434,7 @@
     "Fn": {
       "Type": "AWS::Lambda::Function",
       "Properties": {
-        "FunctionName": { "Fn::Sub": "${AWS::StackName}-adapter" },
+        "FunctionName": { "Fn::Sub": "${AWS::StackName}-executor" },
         "Handler": "impl.handler",
         "Role": { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] },
         "Code": null,

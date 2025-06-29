@@ -29,19 +29,19 @@ dependencies = [
   "boto3",
   "psutil",
   "pyyaml",
+  "watchtower",
 ]
 
 [project.optional-dependencies]
 dml = [
-  "daggerml==0.0.33",
-  "daggerml-cli==0.0.28",
+  "daggerml==0.0.34",
+  "daggerml-cli==0.0.29",
 ]
 nb = [
   "jupyter",
   "nbconvert",
 ]
 app = ["flask==3.1.0"]
-docker = ["docker==7.1.0"]
 test = [
   "pytest",
   "moto[all,server]",
@@ -88,12 +88,12 @@ artifacts = [
 
 [tool.hatch.envs.default]
 python="3.10"
-dependencies = [
-  "twine",
-  "daggerml @ {root:uri}/submodules/python-lib",
-  "daggerml_cli @ {root:uri}/submodules/python-lib/submodules/daggerml_cli",
+features = ["test", "nb"]
+dependencies = ["twine"]
+pre-install-commands = [
+  "pip install -e {root:uri}/submodules/python-lib",
+  "pip install -e {root:uri}/submodules/python-lib/submodules/daggerml_cli",
 ]
-features = ["docker", "test", "nb"]
 
 [tool.hatch.envs.default.scripts]
 test = 'pytest . {args}'
@@ -106,19 +106,11 @@ DML_S3_PREFIX = "jobs"
 
 [tool.hatch.envs.pandas]
 template = "default"
-dependencies = [
-  "pandas==2.2.3",
-  "daggerml @ {root:uri}/submodules/python-lib",
-  "daggerml_cli @ {root:uri}/submodules/python-lib/submodules/daggerml_cli",
-]
+dependencies = ["pandas==2.2.3"]
 
 [tool.hatch.envs.polars]
 template = "default"
-dependencies = [
-  "polars==1.2",
-  "daggerml @ {root:uri}/submodules/python-lib",
-  "daggerml_cli @ {root:uri}/submodules/python-lib/submodules/daggerml_cli",
-]
+dependencies = ["polars==1.2"]
 
 [tool.hatch.envs.app]
 template = "default"

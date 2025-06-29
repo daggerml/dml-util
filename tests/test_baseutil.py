@@ -9,19 +9,17 @@ from unittest import TestCase, skipIf
 import boto3
 
 from dml_util import S3Store
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX, DynamoState, dict_product
+from dml_util.baseutil import DynamoState, dict_product
 
 _root_ = Path(__file__).parent.parent
-
-try:
-    import docker  # noqa: F401
-except ImportError:
-    docker = None
 
 try:
     from daggerml.core import Dml
 except ImportError:
     Dml = None
+
+S3_BUCKET = "does-not-exist"
+S3_PREFIX = "foopy/barple"
 
 
 def rel_to(x, rel):
@@ -35,8 +33,9 @@ def ls_r(path):
 class AwsTestCase(TestCase):
     def setUp(self):
         # clear out env variables for safety
+        self.old_env = os.environ.copy()
         for k in sorted(os.environ.keys()):
-            if k.startswith("AWS_"):
+            if k.startswith("AWS_") or k.startswith("DML_"):
                 del os.environ[k]
         self.region = "us-east-1"
         # this loads env vars, so import after clearing
@@ -47,20 +46,24 @@ class AwsTestCase(TestCase):
         self.server.start()
         self.moto_host, self.moto_port = self.server._server.server_address
         self.moto_endpoint = f"http://{self.moto_host}:{self.moto_port}"
-        aws_env = {
+        self.aws_env = {
             "AWS_ACCESS_KEY_ID": "foo",
             "AWS_SECRET_ACCESS_KEY": "foo",
             "AWS_REGION": self.region,
             "AWS_DEFAULT_REGION": self.region,
             "AWS_ENDPOINT_URL": self.moto_endpoint,
+            "DML_S3_BUCKET": S3_BUCKET,
+            "DML_S3_PREFIX": S3_PREFIX,
         }
-        for k, v in aws_env.items():
+        for k, v in self.aws_env.items():
             os.environ[k] = v
-        self.aws_env = aws_env
 
     def tearDown(self):
         self.server.stop()
         super().tearDown()
+        # restore old env
+        os.environ.clear()
+        os.environ.update(self.old_env)
 
 
 class TestS3(AwsTestCase):
@@ -69,7 +72,7 @@ class TestS3(AwsTestCase):
         boto3.client("s3", endpoint_url=self.moto_endpoint).create_bucket(Bucket=S3_BUCKET)
 
     def test_js(self):
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         js = {"asdf": "wef", "as": [32, True]}
         resp = s3.put_js(js)
         if not isinstance(resp, str):
@@ -78,26 +81,26 @@ class TestS3(AwsTestCase):
         assert js == js2
 
     def test_ls(self):
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         assert s3.ls(recursive=True) == []
         keys = ["a", "b/c", "b/d", "b/d/e", "f"]
         for key in keys:
             s3.put(b"a", name=key)
         ls = s3.ls(recursive=False, lazy=True)
         assert not isinstance(ls, list)
-        assert list(ls) == [s3.name2uri(x) for x in keys if "/" not in x]
+        assert list(ls) == [s3._name2uri(x) for x in keys if "/" not in x]
         ls = s3.ls(recursive=True)
-        assert ls == [s3.name2uri(x) for x in keys]
+        assert ls == [s3._name2uri(x) for x in keys]
         [s3.rm(k) for k in keys]
         assert s3.ls(recursive=True) == []
 
     @skipIf(Dml is None, "Dml not available")
     def test_tar(self):
         context = _root_ / "tests/assets/dkr-context"
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         assert s3.bucket == S3_BUCKET
-        assert s3.prefix.startswith(f"{S3_PREFIX}/")
-        with Dml() as dml:
+        assert s3.prefix.startswith(S3_PREFIX)
+        with Dml.temporary() as dml:
             s3_tar = s3.tar(dml, context)
             with TemporaryDirectory() as tmpd:
                 s3.untar(s3_tar, tmpd)
@@ -107,7 +110,7 @@ class TestS3(AwsTestCase):
             assert s3_tar.uri == s3_tar2.uri
 
     def tearDown(self):
-        s3 = S3Store()
+        s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         s3.rm(*s3.ls(recursive=True))
         super().tearDown()
 

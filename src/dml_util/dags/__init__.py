@@ -22,15 +22,18 @@ def main():
     from argparse import ArgumentParser
 
     parser = ArgumentParser(description="Spin up a known cfn stack (in a dag).")
-    parser.add_argument("name")
+    parser.add_argument("name", nargs="?")
     parser.add_argument("-f", "--filepath")
+    parser.add_argument("-i", "--add-version-info", action="store_true")
+    parser.add_argument("-l", "--list", action="store_true")
     args = parser.parse_args()
-    if args.name == "list":
+    if args.list:
         here = os.path.dirname(__file__)
         for x in os.listdir(here):
             if os.path.isdir(f"{here}/{x}") and x != "__pycache__":
                 print(x)
         sys.exit(0)
+    assert args.name is not None, "name is required unless --list is set"
     with Dml().new(args.name, f"creating {args.name} cfn stack") as dag:
         if args.filepath is None:
             mod = imp(args.name)
@@ -44,7 +47,7 @@ def main():
         dag.output_name = output_name
         dag.cfn_fn = Resource("cfn", adapter="dml-util-local-adapter")
         dag.stack = dag.cfn_fn(
-            f"dml-v{__version__}-{args.name}",
+            (f"dml-v{__version__.replace('.', '-')}-{args.name}" if args.add_version_info else args.name),
             dag.tpl,
             params,
             time(),

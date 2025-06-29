@@ -19,6 +19,11 @@ from botocore.client import Config
 from botocore.exceptions import ClientError
 
 try:
+    from watchtower import CloudWatchLogHandler
+except ImportError:
+    CloudWatchLogHandler = None
+
+try:
     from daggerml import Resource
     from daggerml.core import Node
 
@@ -29,8 +34,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 5  # seconds
-S3_BUCKET = os.environ["DML_S3_BUCKET"]
-S3_PREFIX = os.environ["DML_S3_PREFIX"]
 
 
 def tree_map(predicate, fn, item):
@@ -44,6 +47,34 @@ def tree_map(predicate, fn, item):
 
 
 def dict_product(d):
+    """
+    Given a dictionary of lists, yield all possible combinations of the lists.
+    Good for grid searches.
+
+    Parameters
+    ----------
+    d : dict
+        A dictionary where the keys are strings and the values are lists.
+        The keys represent the names of the parameters, and the values are the
+        possible values for those parameters.
+
+    Yields
+    ------
+    dict
+        A dictionary representing a single combination of parameter values.
+        The keys are the same as the input dictionary, and the values are
+        the corresponding values from the input lists.
+
+    Examples
+    --------
+    >>> d = {'a': [1, 2], 'b': ['x', 'y']}
+    >>> for combination in dict_product(d):
+    ...     print(combination)
+    {'a': 1, 'b': 'x'}
+    {'a': 1, 'b': 'y'}
+    {'a': 2, 'b': 'x'}
+    {'a': 2, 'b': 'y'}
+    """
     keys = list(d.keys())
     for combination in product(*d.values()):
         yield dict(zip(keys, combination))
@@ -53,14 +84,22 @@ def now():
     return time()
 
 
-def _run_cli(command, check=True, **kw):
-    result = subprocess.run(command, capture_output=True, text=True, check=False, **kw)
+def _run_cli(command, capture_output=True, check=True, **kw):
+    result = subprocess.run(command, capture_output=capture_output, text=True, check=False, **kw)
+    logger.debug("command: %r", command)
+    for line in (result.stderr or "").splitlines():
+        if line:
+            logger.debug("stderr: %r", line)
+
+    logger.debug("end STDERR for command: %r", command)
     if result.returncode != 0:
-        msg = f"_run_cli: {command}\n{result.returncode = }\n{result.stdout}\n\n{result.stderr}"
+        msg = f"_run_cli: {command}\n{result.returncode = }"
+        if capture_output:
+            msg += f"\n{result.stdout}\n\n{result.stderr}"
         if check:
             raise RuntimeError(msg)
         return
-    return result.stdout.strip()
+    return (result.stdout or "").strip()
 
 
 def if_read_file(path):
@@ -76,7 +115,10 @@ def proc_exists(pid):
         return False
     except PermissionError:
         pass
-    proc = psutil.Process(pid)
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return False
     return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
 
 
@@ -110,22 +152,37 @@ def exactly_one(**kw):
 
 @dataclass
 class S3Store:
-    bucket: str = None
-    prefix: str = None
-    client: "any" = field(default_factory=lambda: boto3.client("s3"))
+    """
+    S3 Store for DML
 
-    def __post_init__(self):
-        self.bucket = self.bucket or S3_BUCKET
-        self.prefix = self.prefix or f"{S3_PREFIX}/data"
-        if self.bucket is None or self.prefix is None:
-            raise ValueError("Cannot instantiate S3Store without bucket and prefix")
+    Parameters
+    ----------
+    bucket : str
+        S3 bucket name. Defaults to the value of the environment variable "DML_S3_BUCKET".
+    prefix : str
+        S3 prefix. Defaults to the value of the environment variable "DML_S3_PREFIX".
+    client : boto3.client, optional
+        Boto3 S3 client. Defaults to a new client created using the `get_client` function.
+    """
 
-    @staticmethod
-    def get_write_prefix():
-        cache_key = os.environ["DML_CACHE_KEY"]
-        return f"{S3_PREFIX}/runs/{cache_key}"
+    bucket: str = field(default_factory=lambda: os.getenv("DML_S3_BUCKET"))
+    prefix: str = field(default_factory=lambda: os.getenv("DML_S3_PREFIX"))
+    client: "boto3.client" = field(default_factory=lambda: get_client("s3"))
 
     def parse_uri(self, name_or_uri):
+        """
+        Parse a URI or name into bucket and key.
+
+        Examples
+        --------
+        >>> s3 = S3Store(bucket="my-bucket", prefix="my-prefix")
+        >>> s3.parse_uri("s3://my-other-bucket/my-key")
+        ('my-other-bucket', 'my-key')
+        >>> s3.parse_uri("my-key")
+        ('my-bucket', 'my-prefix/my-key')
+        >>> s3.parse_uri(Resource("s3://my-other-bucket/my-key"))
+        ('my-other-bucket', 'my-key')
+        """
         if not isinstance(name_or_uri, str):
             if isinstance(name_or_uri, Node):
                 name_or_uri = name_or_uri.value()
@@ -135,11 +192,11 @@ class S3Store:
             return p.netloc, p.path[1:]
         return self.bucket, f"{self.prefix}/{name_or_uri}"
 
-    def name2uri(self, name):
+    def _name2uri(self, name):
         bkt, key = self.parse_uri(name)
         return f"s3://{bkt}/{key}"
 
-    def _ls(self, recursive=False):
+    def _ls(self, uri=None, recursive=False):
         kw = {}
         if not recursive:
             kw["Delimiter"] = "/"
@@ -151,7 +208,28 @@ class S3Store:
                 uri = f"s3://{self.bucket}/{key}"
                 yield uri
 
-    def ls(self, recursive=False, lazy=False):
+    def ls(self, s3_root=None, recursive=False, lazy=False):
+        """
+        List objects in the S3 bucket.
+
+        Parameters
+        ----------
+        s3_root : str, optional
+            S3 root to list. Defaults to s3://<bucket>/<prefix>/.
+        recursive : bool
+            If True, list all objects recursively. Defaults to False.
+        lazy : bool
+            If True, return a generator. Defaults to False.
+
+        Returns
+        -------
+        generator or list
+            A generator or list of S3 URIs.
+
+        Examples
+        --------
+
+        """
         resp = self._ls(recursive=recursive)
         if not lazy:
             resp = list(resp)
@@ -364,71 +442,101 @@ class LocalState(State):
         pass
 
 
+def add_log_stream(log_stream):
+    """
+    Add a log stream to the environment variables.
+    """
+    log_streams = json.loads(os.getenv("DML_LOG_STREAMS", "[]"))
+    log_streams.append(log_stream)
+    os.environ["DML_LOG_STREAMS"] = json.dumps(sorted(set(log_streams)))
+    return log_stream
+
+
+def add_cloudwatch(cache_key: str, formatter: str):
+    try:
+        import watchtower
+    except ImportError:
+        return
+    return watchtower.CloudWatchLogHandler(
+        log_group=os.environ["DML_LOG_GROUP"],
+        stream_name=add_log_stream(f"/run/{cache_key}/adapter"),
+        create_log_stream=True,
+        create_log_group=False,
+        formatter=formatter,
+        use_queues=False,
+        boto3_client=boto3.client(
+            "logs",
+            region_name=os.getenv("AWS_REGION", "us-east-1"),
+            endpoint_url=os.getenv("AWS_ENDPOINT_URL"),
+        ),
+        level=logging.DEBUG,
+    )
+
+
 @dataclass
 class Runner:
     cache_key: str
     kwargs: "any"
+    cache_path: str
     dump: str
-    retry: bool
     state: State = field(init=False)
+    s3_bucket: str = field(default_factory=lambda: os.getenv("DML_S3_BUCKET"))
+    s3_prefix: str = field(default_factory=lambda: os.getenv("DML_S3_PREFIX"))
     state_class = LocalState
 
     def __post_init__(self):
-        meta_kwargs = (self.kwargs or {}).get("dml_meta", {})
-        bucket = meta_kwargs.get("s3_bucket", S3_BUCKET)
-        prefix = meta_kwargs.get("s3_prefix", S3_PREFIX)
-        clsname = type(self).__name__
         self.state = self.state_class(self.cache_key)
-        self.prefix = f"{prefix}/exec/{clsname.lower()}"
-        self.env = {
-            "DML_S3_BUCKET": bucket,
-            "DML_S3_PREFIX": prefix,
+
+    @property
+    def clsname(self):
+        return self.__class__.__name__.lower()
+
+    @property
+    def prefix(self):
+        return f"{self.s3_prefix}/exec/{self.clsname}"
+
+    @property
+    def env(self):
+        env = {
             "DML_CACHE_KEY": self.cache_key,
-            "DML_WRITE_LOC": f"s3://{bucket}/{self.prefix}/data/{self.cache_key}",
+            "DML_CACHE_PATH": self.cache_path,
+            "DML_WRITE_LOC": f"s3://{self.s3_bucket}/{self.prefix}/data/{self.cache_key}",
+            "DML_LOG_STDOUT": add_log_stream(f"/run/{self.cache_key}/stdout"),
+            "DML_LOG_STDERR": add_log_stream(f"/run/{self.cache_key}/stderr"),
         }
-        self.env.update({k: v for k, v in os.environ.items() if k.startswith("AWS_")})
-        if "DML_FN_CACHE_DIR" in os.environ:
-            self.env["DML_FN_CACHE_DIR"] = os.environ["DML_FN_CACHE_DIR"]
+        return {**{k: v for k, v in os.environ.items() if k.startswith("DML_")}, **env}
 
     def sub_data(self):
         sub = self.kwargs["sub"]
         ks = {
             "cache_key": self.cache_key,
+            "cache_path": self.cache_path,
             "kwargs": sub["data"],
             "dump": self.dump,
-            "retry": self.retry,
+            "s3_bucket": self.s3_bucket,
+            "s3_prefix": self.s3_prefix,
         }
         return sub["uri"], json.dumps(ks), sub["adapter"]
 
     def _fmt(self, msg):
-        return f"{self.__class__.__name__} [{self.cache_key}] :: {msg}"
+        logger.info(msg)
+        return f"{self.clsname} [{self.cache_key}] :: {msg}"
 
     def put_state(self, state):
         self.state.put(state)
 
     def run(self):
         state = self.state.get()
-        delete = False
         if state is None:
-            return {}, self._fmt("Could not acquire job lock")
-        if self.retry and "result" in state:
-            logger.warning(
-                "[%s] dropping old state: %r because of retry flag",
-                self.cache_key,
-                state.pop("result"),
-            )
-        if "result" in state:
-            return state["result"], self._fmt("returning cached...")
+            return None, self._fmt("Could not acquire job lock")
+        delete = False
         try:
             logger.info("getting info from %r", self.state_class.__name__)
-            state, msg, response = self.update(state)
-            if state is None:
+            new_state, msg, response = self.update(state)
+            if new_state is None:
                 delete = True
             else:
-                if response.get("dump") is not None:
-                    self.gc(state)
-                    state = {"result": response}
-                self.put_state(state)
+                self.put_state(new_state)
             return response, self._fmt(msg)
         except Exception:
             delete = True
@@ -454,7 +562,7 @@ class LambdaRunner(Runner):
 
     @property
     def output_loc(self):
-        return self.s3.name2uri("output.dump")
+        return self.s3._name2uri("output.dump")
 
     @classmethod
     def handler(cls, event, context):

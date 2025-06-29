@@ -1,5 +1,6 @@
 import json
 import logging
+import logging.config
 import os
 import re
 import sys
@@ -7,12 +8,26 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from time import sleep
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from daggerml import Error, Resource
 
-from dml_util.baseutil import S3Store, get_client
+from dml_util.baseutil import S3Store, add_log_stream, get_client
 
 logger = logging.getLogger(__name__)
+
+try:
+    import watchtower
+except ImportError:
+    watchtower = None
+
+
+def maybe_get_client(name):
+    try:
+        return get_client(name)
+    except Exception:
+        logger.debug("failed to get client %s", name)
+        return None
 
 
 def _read_data(file):
@@ -40,6 +55,63 @@ class Adapter:
     ADAPTERS = {}
 
     @classmethod
+    def cli_setup(cls, debug=False):
+        cache_key = os.environ["DML_CACHE_KEY"]
+        os.environ["DML_LOG_GROUP"] = os.getenv("DML_LOG_GROUP", "dml")
+        run_id = os.environ["DML_RUN_ID"] = os.getenv("DML_RUN_ID", uuid4().hex[:8])
+        debug = debug or os.getenv("DML_DEBUG")
+        _config = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "simple": {
+                    "format": f"[{cls.__name__.lower()} {run_id}] %(levelname)1s %(name)s: %(message)s",
+                }
+            },
+            "handlers": {
+                "console": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "simple",
+                    "level": (logging.DEBUG if debug else logging.WARNING),
+                }
+            },
+            "loggers": {
+                "dml_util": {
+                    "handlers": ["console"],
+                    "level": logging.DEBUG,
+                },
+                "": {
+                    "handlers": ["console"],
+                    "level": logging.WARNING,
+                },
+            },
+        }
+        if watchtower:
+            _config["handlers"]["cloudwatch"] = {
+                "class": "watchtower.CloudWatchLogHandler",
+                "log_group_name": os.environ["DML_LOG_GROUP"],
+                "log_stream_name": add_log_stream(f"/run/{cache_key}/adapter"),
+                "formatter": "simple",
+                "create_log_stream": True,
+                "create_log_group": False,
+                "level": logging.DEBUG,
+            }
+            _config["loggers"]["dml_util"]["handlers"].append("cloudwatch")
+            _config["loggers"][""]["handlers"].append("cloudwatch")
+        logging.config.dictConfig(_config)
+
+    @classmethod
+    def cli_teardown(cls):
+        # find the watchtower handler and flush/close it so we don't wait
+        if watchtower:
+            for handler in logging.getLogger("dml_util").handlers:
+                if isinstance(handler, watchtower.CloudWatchLogHandler):
+                    logging.getLogger("dml_util").removeHandler(handler)
+                    logging.getLogger("").removeHandler(handler)
+                    handler.flush()
+                    handler.close()
+
+    @classmethod
     def cli(cls, args=None):
         if args is None:
             parser = ArgumentParser()
@@ -48,11 +120,9 @@ class Adapter:
             parser.add_argument("-o", "--output", default=sys.stdout)
             parser.add_argument("-e", "--error", default=sys.stderr)
             parser.add_argument("-n", "--n-iters", default=1, type=int)
+            parser.add_argument("--debug", action="store_true")
             args = parser.parse_args()
-            if os.getenv("DML_DEBUG"):
-                logging.basicConfig(level=logging.DEBUG)
-            else:
-                logging.basicConfig(level=logging.WARNING)
+        cls.cli_setup(debug=args.debug)
         try:
             n_iters = args.n_iters if args.n_iters > 0 else float("inf")
             logger.debug("reading data from %r", args.input)
@@ -60,8 +130,8 @@ class Adapter:
             while n_iters > 0:
                 resp, msg = cls.send_to_remote(args.uri, input)
                 _write_data(msg, args.error, mode="a")
-                if resp.get("dump"):
-                    _write_data(json.dumps(resp), args.output)
+                if resp:
+                    _write_data(resp, args.output)
                     return 0
                 n_iters -= 1
                 if n_iters > 0:
@@ -74,6 +144,8 @@ class Adapter:
             except Exception:
                 logger.exception("cannot write to %r", args.error)
             return 1
+        finally:
+            cls.cli_teardown()
 
     @classmethod
     def funkify(cls, uri, data):
@@ -93,7 +165,7 @@ class Adapter:
 @dataclass
 class LambdaAdapter(Adapter):
     ADAPTER = "dml-util-lambda-adapter"
-    CLIENT = get_client("lambda")
+    CLIENT = maybe_get_client("lambda")
 
     @classmethod
     def send_to_remote(cls, uri, data):

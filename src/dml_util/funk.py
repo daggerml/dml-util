@@ -82,27 +82,14 @@ def funkify(
 
 @funkify
 def dkr_build(dag):
-    from dml_util.lib.dkr import dkr_build
+    from dml_util.lib.dkr import Ecr
 
-    tarball = dag.argv[1].value()
-    flags = dag.argv[2].value() if len(dag.argv) > 2 else []
-    dag.info = dkr_build(tarball.uri, flags)
+    dag.info = Ecr().build(
+        dag.argv[1].value(),
+        dag.argv[2].value() if len(dag.argv) > 2 else [],
+        repo=dag.argv[3].value() if len(dag.argv) > 3 else None,
+    )
     dag.result = dag.info["image"]
-
-
-@funkify
-def dkr_push(dag):
-    from daggerml import Resource
-
-    from dml_util.lib.dkr import dkr_push
-
-    image = dag.argv[1].value()
-    repo = dag.argv[2].value()
-    if isinstance(repo, Resource):
-        repo = repo.uri
-    dag.info = dkr_push(image, repo)
-    dag.result = dag.info["image"]
-    return
 
 
 @funkify
@@ -169,10 +156,11 @@ def aws_fndag():
             f.write(dump)
             f.flush()
 
-    with Dml() as dml:
+    with Dml.temporary() as dml:
         _data = _get_data()
         try:
             with dml.new(data=_data, message_handler=_handler) as dag:
+                dag[".dml/env"] = {k[4:].lower(): v for k, v in os.environ.items() if k.startswith("DML_")}
                 yield dag
         except Exception:
             logger.exception("AWS function failed with exception.")

@@ -6,9 +6,10 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 from dml_util import __version__
-from dml_util.baseutil import S3_BUCKET, S3_PREFIX, S3Store
+from dml_util.baseutil import S3Store
 
 _here_ = Path(__file__).parent
+LOCAL_TEST = os.getenv("DML_TESTING")
 
 
 def zipit(directory_path, output_zip):
@@ -24,7 +25,11 @@ def zipit(directory_path, output_zip):
 def zip_up(s3, filepath):
     with TemporaryDirectory() as tmpd:
         os.system(f"cp {filepath} {tmpd}")
-        os.system(f"pip install 'dml-util=={__version__}' -t {tmpd}")
+        if LOCAL_TEST:
+            root = _here_.parent.parent.parent.parent
+            os.system(f"pip install {root} -t {tmpd}")
+        else:
+            os.system(f"pip install 'dml-util=={__version__}' -t {tmpd}")
         with NamedTemporaryFile(suffix=".zip") as tmpf:
             zipit(tmpd, tmpf.name)
             tmpf.flush()
@@ -38,5 +43,5 @@ def load():
     zipfile = zip_up(s3, _here_ / "impl.py")
     code_data = dict(zip(["S3Bucket", "S3Key"], s3.parse_uri(zipfile.uri)))
     js["Resources"]["Fn"]["Properties"]["Code"] = code_data
-    params = {"Bucket": S3_BUCKET, "Prefix": "opt/dml/exec/batch"}
+    params = {"Bucket": s3.bucket, "Prefix": "opt/dml/exec/batch"}
     return js, params, "LambdaFunctionArn", "dml-util-lambda-adapter"

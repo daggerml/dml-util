@@ -3,11 +3,9 @@ from pathlib import Path
 
 from daggerml import Dml
 
-from dml_util import S3Store, dkr_build, dkr_push, funkify
+from dml_util import S3Store, dkr_build, funkify
 
 _here_ = Path(__file__).parent.parent.parent.parent.parent
-
-print(f"{_here_ = }")
 
 
 @funkify
@@ -17,6 +15,7 @@ def fn(dag):
 
 
 if __name__ == "__main__":
+    print(f"{_here_ = }")
     dml = Dml()
     s3 = S3Store()
     vals = list(range(4))
@@ -34,10 +33,9 @@ if __name__ == "__main__":
                 "-f",
                 "tests/assets/dkr-context/Dockerfile",
             ],
+            dag.ecr,
         )
-        dag.push = dkr_push
-        dag.remote_image = dag.push(dag.img, dag.ecr)
-        dag.fn = funkify(fn, data={"image": dag.remote_image.value()}, adapter=dag.batch.value())
+        dag.fn = funkify(fn, data={"image": dag.img.value()}, adapter=dag.batch.value())
         print(f"{dag.fn.value() = }")
         dag.sum = dag.fn(*vals)
         assert dag.sum.value() == sum(vals[:-1]) / vals[-1]

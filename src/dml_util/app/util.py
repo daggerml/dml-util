@@ -4,7 +4,7 @@ from pprint import pformat
 from daggerml import Error, Resource
 from daggerml.core import Ref
 
-from dml_util.baseutil import S3Store, tree_map
+from dml_util.baseutil import S3Store
 
 
 def get_sub(resource):
@@ -60,11 +60,6 @@ def get_dag_info(dml, dag_id):
     if dag_data.get("argv"):
         node = dml.get_node_value(Ref(dag_data["argv"]))
         out["script"] = (get_sub(node[0]).data or {}).get("script")
-    logs = dag_data["logs"]
-    if logs is not None:
-        s3 = S3Store()
-        logs = tree_map(lambda x: isinstance(x, str), lambda x: s3.get(x).decode(), logs)
-        out["logs"] = logs
     dag = dml.load(dag_id)
     for key in ["result", "argv"]:
         if dag_data.get(key) is not None:

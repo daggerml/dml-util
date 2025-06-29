@@ -5,7 +5,7 @@
     "MyECRRepository": {
       "Type": "AWS::ECR::Repository",
       "Properties": {
-        "RepositoryName": "dml"
+        "RepositoryName": { "Ref": "AWS::StackName" }
       }
     }
   },

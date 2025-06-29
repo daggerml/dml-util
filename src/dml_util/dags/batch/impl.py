@@ -41,9 +41,9 @@ class Batch(LambdaRunner):
                     "-i",
                     self.s3.put(sub_kwargs.encode(), name="input.dump"),
                     "-o",
-                    self.s3.name2uri("output.dump"),
+                    self.s3._name2uri("output.dump"),
                     "-e",
-                    self.s3.name2uri("error.dump"),
+                    self.s3._name2uri("error.dump"),
                     sub_uri,
                 ],
                 "environment": [
@@ -87,7 +87,7 @@ class Batch(LambdaRunner):
             return state, msg, {}
         if self.s3.exists("error.dump"):
             err = self.s3.get("error.dump").decode()
-            logger.info("%r found with content: %r", self.s3.name2uri("error.dump"), err)
+            logger.info("%r found with content: %r", self.s3._name2uri("error.dump"), err)
             msg += f"\n\n{err}"
         if status == SUCCESS_STATE and self.s3.exists("output.dump"):
             logger.info("job finished successfully and output was written...")
@@ -96,7 +96,7 @@ class Batch(LambdaRunner):
             return state, msg, js
         if not self.s3.exists("output.dump"):
             msg = f"{msg} (no output found)"
-        logger.info("file: %r does not exist", self.s3.name2uri("output.dump"))
+        logger.info("file: %r does not exist", self.s3._name2uri("output.dump"))
         if "statusReason" in self.job_desc:
             msg = f"{msg} (reason: {self.job_desc['statusReason']})"
         logger.info(msg)

@@ -62,7 +62,9 @@ class TestDagBatch(FullDmlTestCase):
         super().tearDown()
 
     def test_lambda_adapter(self):
-        resp = {"logs": "qwer"}
+        os.environ["DML_CACHE_KEY"] = "foo:key"
+        os.environ["DML_CACHE_PATH"] = "bar"
+        resp = None
 
         def foo(data, _):
             return {"status": 200, "response": resp, "message": "ok"}
@@ -78,26 +80,24 @@ class TestDagBatch(FullDmlTestCase):
             assert LambdaAdapter.cli(conf) == 0
             assert conf.output.read() == ""
             assert conf.error.read() == "ok"
-            resp = {"dump": None}
+            resp = "opaque-dump"
             assert LambdaAdapter.cli(conf) == 0
-            assert conf.output.read() == ""
-            assert conf.error.read() == "ok"
-            resp = {"dump": "opaque-dump"}
-            assert LambdaAdapter.cli(conf) == 0
-            assert json.loads(conf.output.read()) == resp
+            assert conf.output.read() == "opaque-dump"
             assert conf.error.read() == "ok"
 
     def test_pipes(self):
         from dml_util.dags.batch.impl import Batch
 
+        os.environ["DML_CACHE_KEY"] = "foo:key"
+        os.environ["DML_CACHE_PATH"] = "bar"
         data = {
             "cache_key": "foo:key",
+            "cache_path": "bar",
             "kwargs": {
                 "sub": {"uri": "bar", "data": {}, "adapter": "baz"},
                 "image": {"uri": "foo:uri"},
             },
             "dump": "opaque",
-            "retry": False,
         }
         conf = Config(
             uri="asdf:uri",
@@ -120,7 +120,7 @@ class TestDagBatch(FullDmlTestCase):
                 patch.object(Batch.CLIENT, "submit_job", return_value={"jobId": job_id}),
             ):
                 status = LambdaAdapter.cli(conf)
-                assert conf.error.read() == f"Batch [foo:key] :: job_id = {job_id!r} submitted"
+                assert conf.error.read() == f"batch [foo:key] :: job_id = {job_id!r} submitted"
                 assert conf.output.read() == ""
                 assert status == 0
             describe_result = {
@@ -134,7 +134,7 @@ class TestDagBatch(FullDmlTestCase):
             }
             with patch.object(Batch.CLIENT, "describe_jobs", return_value=describe_result):
                 status = LambdaAdapter.cli(conf)
-                assert conf.error.read() == f"Batch [foo:key] :: job_id = {job_id!r} RUNNING"
+                assert conf.error.read() == f"batch [foo:key] :: job_id = {job_id!r} RUNNING"
                 assert conf.output.read() == ""
                 assert status == 0
             describe_result = {
@@ -154,21 +154,23 @@ class TestDagBatch(FullDmlTestCase):
                 patch.object(Batch.CLIENT, "deregister_job_definition", return_value=None),
             ):
                 status = LambdaAdapter.cli(conf)
-                assert conf.error.read() == f"Batch [foo:key] :: job_id = {job_id!r} SUCCEEDED"
+                assert conf.error.read() == f"batch [foo:key] :: job_id = {job_id!r} SUCCEEDED"
                 assert status == 0
                 assert conf.output.read() != ""
 
     def test_no_output(self):
         from dml_util.dags.batch.impl import Batch
 
+        os.environ["DML_CACHE_KEY"] = "foo:key"
+        os.environ["DML_CACHE_PATH"] = "bar"
         data = {
             "cache_key": "foo:key",
+            "cache_path": "bar",
             "kwargs": {
                 "sub": {"uri": "bar", "data": {}, "adapter": "baz"},
                 "image": {"uri": "foo:uri"},
             },
             "dump": "opaque",
-            "retry": False,
         }
         conf = Config(
             uri="asdf:uri",
@@ -191,7 +193,7 @@ class TestDagBatch(FullDmlTestCase):
                 patch.object(Batch.CLIENT, "submit_job", return_value={"jobId": job_id}),
             ):
                 status = LambdaAdapter.cli(conf)
-                assert conf.error.read() == f"Batch [foo:key] :: job_id = {job_id!r} submitted"
+                assert conf.error.read() == f"batch [foo:key] :: job_id = {job_id!r} submitted"
                 assert conf.output.read() == ""
                 assert status == 0
             # exited without writing output

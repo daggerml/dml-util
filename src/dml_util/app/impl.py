@@ -7,7 +7,6 @@ from flask import Flask, jsonify, render_template, request, url_for
 from dml_util.app.util import get_dag_info, get_node_info
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 def get_dropdowns(dml, repo, branch, dag_id):
@@ -99,4 +98,5 @@ def run():
     parser = ArgumentParser()
     parser.add_argument("-p", "--port", type=int, default=5000)
     args = parser.parse_args()
+    logger.setLevel(logging.DEBUG)
     create_app(Dml()).run(debug=True, port=args.port)
