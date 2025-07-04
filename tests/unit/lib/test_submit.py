@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import boto3
 import pytest
-from botocore.exceptions import NoCredentialsError
+from botocore.exceptions import NoCredentialsError, NoRegionError
 
 from dml_util.core.utils import proc_exists
 from dml_util.lib.submit import Streamer, launch_detached
@@ -44,9 +44,13 @@ def test_streamer_send_logs():
 
 
 def test_fails_gracefully():
-    sts_client = boto3.client("sts")
-    with pytest.raises(NoCredentialsError):
-        sts_client.get_caller_identity()
+    try:
+        sts_client = boto3.client("sts")
+    except NoRegionError:
+        pass
+    else:
+        with pytest.raises(NoCredentialsError):
+            sts_client.get_caller_identity()
     fd_r = MagicMock()
     fd_r.readline.side_effect = ["log1\n", "log2\n", ""]
     streamer = Streamer(LOG_GROUP_NAME, LOG_STREAM_NAME, fd_r)
