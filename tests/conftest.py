@@ -92,6 +92,7 @@ def setup_environment(clear_envvars):
 def aws_server(_aws_server, clear_envvars):
     # clear out env variables for safety
     # this loads env vars, so import after clearing
+    boto3.setup_default_session()
     with patch.dict(os.environ, _aws_server["envvars"]):
         yield _aws_server
     boto3.setup_default_session()
