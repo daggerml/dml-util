@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 def get_client(name):
     """Get a boto3 client with standard configuration."""
+    # FIXME: This function should figure out the region from the environment
     logger.info("getting %r client", name)
     config = Config(connect_timeout=5, retries={"max_attempts": 5, "mode": "adaptive"})
     return boto3.client(name, config=config)

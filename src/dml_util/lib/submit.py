@@ -34,9 +34,11 @@ class Streamer:
 
     def __post_init__(self):
         try:
+            # FIXME: remove this when `get_client` is updated to handle regions
             self.client = get_client("logs")
         except NoRegionError:
             logger.warning(f"*** No AWS region configured for {self.run_id} ***")
+            self.client = None
             self.stop.set()
             return
         self.thread = threading.Thread(target=self._send_logs)
