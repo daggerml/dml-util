@@ -13,8 +13,8 @@ def get_client(name, region=None) -> "boto3.client":
     """Get a boto3 client with standard configuration."""
     # FIXME: This function should figure out the region from the environment
     logger.info("getting %r client", name)
-    region = region or os.getenv("AWS_REGION", boto3.session.Session().region_name or "us-east-1")
-    config = Config(connect_timeout=5, retries={"max_attempts": 5, "mode": "adaptive"})
+    region = region or os.getenv("AWS_REGION", boto3.Session().region_name or "us-east-1")
+    config = Config(connect_timeout=5, retries={"max_attempts": 5, "mode": "adaptive"}, region_name=region)
     return boto3.client(name, config=config)
 
 
