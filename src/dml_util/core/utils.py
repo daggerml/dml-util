@@ -32,7 +32,7 @@ import json
 import logging
 import os
 import subprocess
-from itertools import product
+from itertools import islice, product
 from time import time
 
 logger = logging.getLogger(__name__)
@@ -141,6 +141,17 @@ def compute_hash(obj, chunk_size=8192, hash_algorithm="sha256"):
         hash_fn.update(chunk)
     obj.seek(0)
     return hash_fn.hexdigest()
+
+
+def batched(iterable, n, *, strict=False):
+    # batched('ABCDEFG', 3) → ABC DEF G
+    if n < 1:
+        raise ValueError('n must be at least one')
+    iterator = iter(iterable)
+    while batch := tuple(islice(iterator, n)):
+        if strict and len(batch) != n:
+            raise ValueError('batched(): incomplete batch')
+        yield batch
 
 
 def exactly_one(**kw):

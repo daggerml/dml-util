@@ -87,12 +87,11 @@ def funkify(
     ...     dag.result = "Hello, DML!"
 
     They're composable so you can stack them:
-    >>> @funkify(uri="batch")
-    ... @funkify(uri="docker", data={"image": "my-python:3.8"})
+    >>> @funkify(uri="docker", data={"image": "my-python:3.8"})
     ... @funkify(uri="hatch", data={"name": "example"})
     ... @funkify
     ... def another_function(dag):
-    ...     return "This function runs in the `name` hatch env, inside a docker image, inside of batch."
+    ...     return "This function runs in the `name` hatch env, inside a docker image."
     """
     if fn is None:
         return partial(
@@ -201,10 +200,7 @@ def aws_fndag():
         _data = _get_data()
         try:
             with dml.new(data=_data, message_handler=_handler) as dag:
-                env = {k[4:].lower(): v for k, v in os.environ.items() if k.startswith("DML_")}
-                env["log_stdout"] = os.environ.get("DML_LOG_STDOUT")
-                env["log_stderr"] = os.environ.get("DML_LOG_STDERR")
-                dag[".dml/env"] = env
+                dag[".dml/env"] = {k[4:].lower(): v for k, v in os.environ.items() if k.startswith("DML_")}
                 yield dag
         except Exception:
             logger.exception("AWS function failed with exception.")

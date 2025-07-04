@@ -50,7 +50,6 @@ test = [
 dml-util-lambda-adapter = "dml_util.adapters:LambdaAdapter.cli"
 dml-util-local-adapter = "dml_util.adapters:LocalAdapter.cli"
 dml-util-dag = "dml_util.dags:main"
-dml-ui = "dml_util.app.impl:run"
 
 [project.urls]
 Documentation = "https://github.com/daggerml/dml-util#readme"
@@ -93,11 +92,9 @@ pre-install-commands = [
   "pip install -e {root:uri}/submodules/python-lib",
   "pip install -e {root:uri}/submodules/python-lib/submodules/daggerml_cli",
 ]
-
 [tool.hatch.envs.default.scripts]
 test = 'pytest {args}'
 dml-build = "hatch build && twine upload -r {args:testpypi} dist/*"
-
 [tool.hatch.envs.default.env-vars]
 PYTHONDONTWRITEBYTECODE = "1"
 DML_S3_BUCKET = "dml-doesnotexist"
@@ -106,25 +103,12 @@ DML_S3_PREFIX = "jobs"
 [tool.hatch.envs.pandas]
 template = "default"
 dependencies = ["pandas==2.2.3"]
-
 [tool.hatch.envs.polars]
 template = "default"
 dependencies = ["polars==1.2"]
 
-[tool.hatch.envs.app]
-template = "default"
-features = ["dml", "app"]
-dependencies = []
-
-[tool.hatch.envs.app.env-vars]
-DML_REPO = "test"
-DML_S3_BUCKET = "dml-asdf-test"
-DML_S3_PREFIX = "jobs"
-DML_TESTING = "1"
-
 [tool.hatch.envs.test-matrix]
 template = "default"
-
 [[tool.hatch.envs.test-matrix.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
@@ -133,7 +117,6 @@ python="3.10"
 features = ["test"]
 dependencies = []
 pre-install-commands = []
-
 [tool.hatch.envs.no-dml.env-vars]
 PYTHONDONTWRITEBYTECODE = "1"
 AWS_ACCESS_KEY_ID  = "doesnotexist"
