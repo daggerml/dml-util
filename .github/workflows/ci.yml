@@ -47,7 +47,7 @@ jobs:
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
           conda run -n dml-pandas pip install .[nb,test] ./submodules/*
       - name: pytest
-        run: python -m pytest --doctest-modules src/ tests/
+        run: pytest
     env:
       DML_RUN_SLOW_TESTS: true
   lint:
