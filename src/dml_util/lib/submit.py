@@ -12,7 +12,7 @@ from typing import TextIO
 from uuid import uuid4
 
 import boto3
-from botocore.exceptions import NoCredentialsError, NoRegionError
+from botocore.exceptions import NoCredentialsError
 
 from dml_util.aws import get_client
 
@@ -30,17 +30,9 @@ class Streamer:
     buffer_lock: threading.Lock = field(default_factory=threading.Lock)
     thread: threading.Thread = field(init=False)
     stop: threading.Event = field(default_factory=threading.Event)
-    client: boto3.client = field(default=None)
+    client: boto3.client = field(default_factory=lambda: get_client("logs"))
 
     def __post_init__(self):
-        if self.client is None:
-            try:
-                # FIXME: remove this when `get_client` is updated to handle regions
-                self.client = get_client("logs")
-            except NoRegionError:
-                logger.warning(f"*** No AWS region configured for {self.run_id} ***")
-                self.client = None
-                self.stop.set()
         self.thread = threading.Thread(target=self._send_logs)
 
     def _send(self):
