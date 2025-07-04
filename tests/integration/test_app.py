@@ -1,13 +1,15 @@
 from tempfile import TemporaryDirectory
+from unittest import skipUnless
 
 from daggerml import Dml, Error, Resource
 
 from dml_util import funkify
 from dml_util.app.impl import create_app
 from dml_util.app.util import get_dag_info, get_sub
-from tests.test_all import FullDmlTestCase
+from tests.util import RUN_SLOW_TESTS, FullDmlTestCase
 
 
+@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestAppUtil(FullDmlTestCase):
     def test_get_sub(self):
         resource = Resource("uri0", data={"sub": Resource("uri1", data={"sub": Resource("uri2")})})
@@ -59,6 +61,7 @@ class TestAppUtil(FullDmlTestCase):
                 assert_info(dml, info)
 
 
+@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestAppWeb(FullDmlTestCase):
     def test_page_root(self):
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:

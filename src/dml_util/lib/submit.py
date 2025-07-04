@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -11,7 +12,9 @@ from typing import TextIO
 from uuid import uuid4
 
 import boto3
+from botocore.exceptions import NoCredentialsError
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Streamer:
@@ -41,8 +44,10 @@ class Streamer:
                 logStreamName=self.log_stream_name,
                 logEvents=events,
             )
+        except KeyboardInterrupt:
+            raise
         except Exception:
-            pass
+            logger.exception(f"Error sending logs for {self.run_id} to {self.log_group_name}/{self.log_stream_name}")
 
     def _send_logs(self):
         while not self.stop.is_set():
@@ -52,19 +57,23 @@ class Streamer:
         while len(self.log_buffer) > 0:
             self._send()
 
-    def put(self, *messages: str):
-        with self.buffer_lock:
-            self.log_buffer.extend([{"timestamp": int(time() * 1000), "message": message} for message in messages])
+    def put(self, message: str):
+        logger.info(f"[{self.run_id}]: {message}")
+        if not self.stop.is_set():
+            with self.buffer_lock:
+                self.log_buffer.append({"timestamp": int(time() * 1000), "message": message})
 
     def run(self):
-        if not self.log_group_name or not self.log_stream_name:
-            return
-        self.thread.start()
         try:
-            try:
-                self.client.create_log_stream(logGroupName=self.log_group_name, logStreamName=self.log_stream_name)
-            except self.client.exceptions.ResourceAlreadyExistsException:
-                pass
+            self.client.create_log_stream(logGroupName=self.log_group_name, logStreamName=self.log_stream_name)
+        except NoCredentialsError:
+            logger.warning(f"*** No CloudWatch client available for {self.run_id} ***")
+            self.stop.set()
+        except self.client.exceptions.ResourceAlreadyExistsException:
+            pass
+        if not self.stop.is_set():
+            self.thread.start()
+        try:
             self.put(f"*** Starting {self.run_id} ***")
             for line in iter(self.fd.readline, ""):
                 if not line.strip():
@@ -72,17 +81,25 @@ class Streamer:
                 self.put(line.strip())
             self.put(f"*** Ending {self.run_id} ***")
         except Exception as e:
-            self.put(
-                f"*** Error in {self.run_id}: {e} ***",
-                *[line for line in traceback.format_exc().splitlines()],
-                f"** Ending {self.run_id} due to error ***",
-            )
+            self.put(f"*** Error in {self.run_id}: {e} ***"),
+            [self.put(line) for line in traceback.format_exc().splitlines()]
+            self.put(f"** Ending {self.run_id} due to error ***")
         finally:
             self.stop.set()
+            self.join()
+
+    def join(self):
+        if self.thread.is_alive():
             self.thread.join()
 
 
-def _run_and_stream(command, run_id, log_group, out_stream, err_stream):
+def _run_and_stream(command=None, run_id=None, log_group=None, out_stream=None, err_stream=None):
+    command = command or json.loads(os.environ.pop("DML_CMD"))
+    run_id = run_id or os.environ["DML_RUN_ID"]
+    log_group = log_group or os.environ["DML_LOG_GROUP"]
+    out_stream = out_stream or os.environ["DML_LOG_STDOUT"]
+    err_stream = err_stream or os.environ["DML_LOG_STDERR"]
+
     def start_streamer(stream_name, fd):
         streamer = Streamer(log_group, stream_name, fd, run_id)
         thread = threading.Thread(target=streamer.run)
@@ -110,16 +127,6 @@ def _run_and_stream(command, run_id, log_group, out_stream, err_stream):
         err_thread.join()
 
 
-def _worker():
-    _run_and_stream(
-        json.loads(os.environ.pop("DML_CMD")),
-        os.getenv("DML_RUN_ID"),
-        os.getenv("DML_LOG_GROUP"),
-        os.getenv("DML_LOG_STDOUT"),
-        os.getenv("DML_LOG_STDERR"),
-    )
-
-
 def launch_detached(cmd, env=None):
     """
     Fire-and-forget.  Returns immediately.  The background helper
@@ -127,6 +134,11 @@ def launch_detached(cmd, env=None):
 
         launch_detached(["python", "train.py"], "my-logs", "exec/42")
     """
+    for k, v in (env or {}).items():
+        if not isinstance(k, str):
+            raise TypeError(f"Environment variable {k!r} must be strings, got {k!r}")
+        if not isinstance(v, str):
+            raise TypeError(f"Environment variable values must be strings, got {v!r}")
     proc = subprocess.Popen(
         [sys.executable, "-u", __file__, "--logstream-worker"],
         stdout=subprocess.DEVNULL,
@@ -139,4 +151,4 @@ def launch_detached(cmd, env=None):
 
 
 if __name__ == "__main__":
-    _worker() if "--logstream-worker" in sys.argv else None
+    _run_and_stream() if "--logstream-worker" in sys.argv else None

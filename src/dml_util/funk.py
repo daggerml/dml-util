@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import boto3
 from daggerml import Dml, Resource
 
-from dml_util.adapter import Adapter
+from dml_util.adapters import AdapterBase
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,47 @@ def funkify(
     extra_fns=(),
     extra_lines=(),
 ):
+    """
+    Decorator to funkify a function into a DML Resource.
+
+    Parameters
+    ----------
+    fn : callable, Resource, optional
+        The function to funkify.
+    uri : str, optional
+        The URI for the resource. Defaults to "script".
+    data : dict, optional
+        Additional data to include in the resource. Defaults to None.
+    adapter : str | Resource, optional
+        The adapter to use for the resource. Defaults to "local".
+    extra_fns : tuple, optional
+        Additional functions to include in the script. Defaults to an empty tuple.
+    extra_lines : tuple, optional
+        Additional lines to include in the script. Defaults to an empty tuple.
+
+    Returns
+    -------
+    Resource
+        A DML Resource representing the funkified function.
+
+    Notes
+    -----
+    This is meant to be used as a decorator.
+
+    Examples
+    --------
+    >>> @funkify
+    ... def my_function(dag):
+    ...     dag.result = "Hello, DML!"
+
+    They're composable so you can stack them:
+    >>> @funkify(uri="batch")
+    ... @funkify(uri="docker", data={"image": "my-python:3.8"})
+    ... @funkify(uri="hatch", data={"name": "example"})
+    ... @funkify
+    ... def another_function(dag):
+    ...     return "This function runs in the `name` hatch env, inside a docker image, inside of batch."
+    """
     if fn is None:
         return partial(
             funkify,
@@ -64,7 +105,7 @@ def funkify(
         )
     if isinstance(adapter, Resource):
         return Resource(adapter.uri, data={"sub": fn, **(data or {})}, adapter=adapter.adapter)
-    adapter_ = Adapter.ADAPTERS.get(adapter)
+    adapter_ = AdapterBase.ADAPTERS.get(adapter)
     if adapter_ is None:
         raise ValueError(f"Adapter: {adapter!r} does not exist")
     data = data or {}
@@ -160,7 +201,10 @@ def aws_fndag():
         _data = _get_data()
         try:
             with dml.new(data=_data, message_handler=_handler) as dag:
-                dag[".dml/env"] = {k[4:].lower(): v for k, v in os.environ.items() if k.startswith("DML_")}
+                env = {k[4:].lower(): v for k, v in os.environ.items() if k.startswith("DML_")}
+                env["log_stdout"] = os.environ.get("DML_LOG_STDOUT")
+                env["log_stderr"] = os.environ.get("DML_LOG_STDERR")
+                dag[".dml/env"] = env
                 yield dag
         except Exception:
             logger.exception("AWS function failed with exception.")

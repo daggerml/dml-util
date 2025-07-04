@@ -44,3 +44,7 @@ pip install dml-util
 - [ ] Custom dashboards
 - [ ] git integration
 - [ ] cancel running jobs via executor
+- [ ] Add docstrings to each module specifying the protocol
+- [ ] Use docstrings to generate tests
+
+- add neovim command to test only not slow. And another to test All.

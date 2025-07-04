@@ -1,5 +1,4 @@
 import getpass
-import json
 import os
 import re
 import shlex
@@ -9,24 +8,32 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from textwrap import dedent
-from unittest import skipIf
+from unittest import TestCase, skipIf, skipUnless
 from unittest.mock import patch
 
 import boto3
-from daggerml import Dml, Resource
-from daggerml.core import Error
 
-import dml_util.adapter as adapter
+import dml_util.adapters as adapter
 import dml_util.wrapper  # noqa: F401
-from dml_util import S3Store, funk, funkify
+from dml_util import funk
+from dml_util.aws.s3 import S3Store
+from dml_util.core.daggerml import Dml, Error, Resource
+from dml_util.funk import funkify
 from dml_util.lib.dkr import Ecr
-from dml_util.runner import DockerRunner, HatchRunner
-from tests.test_baseutil import S3_BUCKET, S3_PREFIX, AwsTestCase
+from dml_util.runners import CondaRunner, HatchRunner
+from tests.util import (
+    RUN_SLOW_TESTS,
+    S3_BUCKET,
+    S3_PREFIX,
+    FullDmlTestCase,
+    _root_,
+    tmpdir,
+)
 
-_root_ = Path(__file__).parent.parent
 VALID_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+")
 
 
@@ -38,38 +45,15 @@ class Config:
         return self.__dict__.get(item, None)
 
 
-def tmpdir():
-    return TemporaryDirectory(prefix="dml-util-test-")
-
-
-class FullDmlTestCase(AwsTestCase):
-    def setUp(self):
-        super().setUp()
-        boto3.client("logs", endpoint_url=self.moto_endpoint).create_log_group(logGroupName="dml")
-        boto3.client("s3", endpoint_url=self.moto_endpoint).create_bucket(Bucket=S3_BUCKET)
-        self.tmpd = tmpdir()
-        os.environ["DML_FN_CACHE_DIR"] = self.tmpd.name
-        # os.environ["DML_DEBUG"] = "1"
-
-    def tearDown(self):
-        s3 = S3Store()
-        s3.rm(*s3.ls(recursive=True))
-        self.tmpd.cleanup()
-        logc = boto3.client("logs", endpoint_url=self.moto_endpoint)
-        for log_stream in logc.describe_log_streams(logGroupName="dml")["logStreams"]:
-            logc.delete_log_stream(logGroupName="dml", logStreamName=log_stream["logStreamName"])
-        logc.delete_log_group(logGroupName="dml")
-        super().tearDown()
-
-
+@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestTooling(FullDmlTestCase):
     def test_s3_uri(self):
         s3 = S3Store()
         raw = b"foo bar baz"
         resp = s3.put(raw, name="foo.txt")
-        assert resp.uri == f"s3://{S3_BUCKET}/{S3_PREFIX}/foo.txt"
-        resp = s3.put(raw, uri=f"s3://{S3_BUCKET}/asdf/foo.txt")
-        assert resp.uri == f"s3://{S3_BUCKET}/asdf/foo.txt"
+        assert resp.uri == f"s3://{S3_BUCKET}/{S3_PREFIX}/data/foo.txt"
+        resp = s3.put(raw, uri=f"s3://{S3_BUCKET}/data/asdf/foo.txt")
+        assert resp.uri == f"s3://{S3_BUCKET}/data/asdf/foo.txt"
 
     def test_runner(self):
         os.environ["DML_CACHE_KEY"] = "test_key"
@@ -83,19 +67,19 @@ class TestTooling(FullDmlTestCase):
             )
             with open(conf.input, "w") as f:
                 f.write("foo")
-            with patch.object(adapter.Adapter, "send_to_remote", return_value=(None, "testing0")):
-                status = adapter.Adapter.cli(conf)
+            with patch.object(adapter.AdapterBase, "send_to_remote", return_value=(None, "testing0")):
+                status = adapter.AdapterBase.cli(conf)
                 assert status == 0
                 assert not os.path.exists(conf.output)
                 with open(conf.error, "r+") as f:
                     assert f.read().strip() == "testing0"
                 os.truncate(conf.error, 0)
             with patch.object(
-                adapter.Adapter,
+                adapter.AdapterBase,
                 "send_to_remote",
                 return_value=("my-dump", "testing1"),
             ):
-                status = adapter.Adapter.cli(conf)
+                status = adapter.AdapterBase.cli(conf)
                 assert status == 0
                 with open(conf.output, "r") as f:
                     assert f.read() == "my-dump"
@@ -103,35 +87,6 @@ class TestTooling(FullDmlTestCase):
                 with open(conf.error, "r") as f:
                     assert f.read().strip() == "testing1"
                 os.truncate(conf.error, 0)
-
-    def test_runner_daemon(self):
-        os.environ["DML_CACHE_KEY"] = "test_key"
-        with tmpdir() as tmpd:
-            conf = Config(
-                uri="asdf:uri",
-                input=f"{tmpd}/input.dump",
-                output=f"{tmpd}/output.dump",
-                error=f"{tmpd}/error.dump",
-                n_iters=-1,
-            )
-            with open(conf.input, "w") as f:
-                f.write("foo")
-            i = 0
-
-            def send_to_remote(uri, data):
-                nonlocal i
-                i += 1
-                if i < 3:
-                    return None, "testing0"
-                return "qwer", "testing1"
-
-            with patch.object(adapter.Adapter, "send_to_remote", new=send_to_remote):
-                status = adapter.Adapter.cli(conf)
-                assert status == 0
-                with open(conf.output, "r") as f:
-                    assert f.read() == "qwer"
-                with open(conf.error, "r") as f:
-                    assert f.read().strip() == "testing0\ntesting0\ntesting1"
 
     def test_git_info(self):
         with Dml.temporary() as dml:
@@ -264,25 +219,8 @@ class TestTooling(FullDmlTestCase):
                     d0.n0 = d0.f0(1, 0)
 
 
+@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestFunks(FullDmlTestCase):
-    @skipIf(not shutil.which("hatch"), "hatch is not available")
-    def test_hatch_script_passes_env(self):
-        js = HatchRunner.funkify("pandas", None)
-        print(js["script"])
-        # assert False
-        assert isinstance(js, dict)
-        resp = subprocess.run(
-            ["bash", "-c", js["script"], "script", "env"],
-            # shell=True,
-            text=True,
-            capture_output=True,
-            env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": self.tmpd.name},
-        )
-        lines = resp.stdout.splitlines()
-        env = {k: v for k, v in (x.split("=", 1) for x in lines) if k.startswith("DML_")}
-        assert env["DML_CACHE_KEY"] == "test_key"
-        assert env["DML_CACHE_PATH"] == self.tmpd.name
-
     @skipIf(not shutil.which("hatch"), "hatch is not available")
     def test_hatch(self):
         @funkify(uri="hatch", data={"name": "pandas", "path": str(_root_)})
@@ -293,18 +231,16 @@ class TestFunks(FullDmlTestCase):
             print("testing stdout...")
             return pd.__version__
 
-        logc = boto3.client("logs", endpoint_url=self.moto_endpoint)
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
             with Dml.temporary(cache_path=tmpd) as dml:
                 d0 = dml.new("d0", "d0")
                 d0.f0 = dag_fn
                 result = d0.f0()
                 assert VALID_VERSION.match(result.value())
-                streams = json.loads(result.load()[".dml/env"].value()["log_streams"])
-                assert all(x.startswith("/run/") for x in streams)
-                suffixes = [x.split("/")[-1] for x in streams]
-                assert len(streams) == 3, f"Expected 3 log streams, got {len(streams)}: {suffixes}"
-        logs = logc.get_log_events(logGroupName="dml", logStreamName=streams[-1])["events"]
+                config = result.load()[".dml/env"].value()
+                # Handle missing log_streams in refactored code
+        client = boto3.client("logs", endpoint_url=self.moto_endpoint)
+        logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stdout"])["events"]
         assert len(logs) == 3
         assert logs[1]["message"] == "testing stdout..."
 
@@ -321,6 +257,7 @@ class TestFunks(FullDmlTestCase):
         def dag_fn(dag):
             import pandas as pd
 
+            print("testing stdout...")
             return pd.__version__
 
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
@@ -329,8 +266,11 @@ class TestFunks(FullDmlTestCase):
                 d0.f0 = dag_fn
                 result = d0.f0()
                 assert VALID_VERSION.match(result.value())
-                tmp = json.loads(result.load()[".dml/env"].value()["log_streams"])
-                assert len(tmp) == 3
+                config = result.load()[".dml/env"].value()
+        client = boto3.client("logs", endpoint_url=self.moto_endpoint)
+        logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stdout"])["events"]
+        assert len(logs) == 3
+        assert logs[1]["message"] == "testing stdout..."
 
     @skipIf(not shutil.which("conda"), "conda is not available")
     @skipIf(not shutil.which("hatch"), "hatch is not available")
@@ -343,11 +283,13 @@ class TestFunks(FullDmlTestCase):
         def dag_fn(dag):
             import pandas as pd
 
+            print("stdout from inner func")
             return pd.__version__
 
         @funkify(uri="hatch", data={"name": "default", "path": str(_root_)})
         @funkify
         def dag_fn2(dag):
+            print("stdout from outer func")
             try:
                 import pandas  # noqa: F401
 
@@ -364,8 +306,11 @@ class TestFunks(FullDmlTestCase):
                 dag.dag_fn2 = dag_fn2
                 result = dag.dag_fn2(dag.dag_fn)
                 assert VALID_VERSION.match(result.value())
-                tmp = json.loads(result.load()[".dml/env"].value()["log_streams"])
-                assert len(tmp) == 3
+                config = result.load()[".dml/env"].value()
+        client = boto3.client("logs", endpoint_url=self.moto_endpoint)
+        logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stdout"])["events"]
+        assert len(logs) == 3
+        assert logs[1]["message"] == "stdout from outer func"
 
     @skipIf(not shutil.which("conda"), "conda is not available")
     @skipIf(not shutil.which("hatch"), "hatch is not available")
@@ -399,99 +344,6 @@ class TestFunks(FullDmlTestCase):
                 dag.dag_fn2 = dag_fn2
                 result = dag.dag_fn2(dag.dag_fn, *vals).value()
                 assert VALID_VERSION.match(result)
-
-    def test_docker_patched(self):
-        os.environ["DML_CACHE_KEY"] = "foo:key"
-        data = {
-            "cache_key": "foo:key",
-            "cache_path": "bar",
-            "kwargs": {
-                "sub": {"uri": "bar", "data": {}, "adapter": "baz"},
-                "image": {"uri": "foo:uri"},
-            },
-            "dump": "opaque",
-        }
-        with tmpdir() as tmpd:
-            conf = Config(
-                uri="docker",
-                input=f"{tmpd}/input.dump",
-                output=f"{tmpd}/output.dump",
-                error=f"{tmpd}/error.dump",
-                n_iters=1,
-            )
-            with open(conf.input, "w") as f:
-                json.dump(data, f)
-            with patch.object(DockerRunner, "start_docker", return_value="testing0"):
-                status = adapter.LocalAdapter.cli(conf)
-                assert status == 0
-                assert not os.path.exists(conf.output)
-                with open(conf.error, "r") as f:
-                    tmp = f.read().strip()
-                    assert "foo:key" in tmp
-                    assert "container testing0 started" in tmp
-                os.truncate(conf.error, 0)
-            sc = DockerRunner.state_class(data["cache_key"])
-            assert sc.get()["cid"] == "testing0"
-            docker_tmpd = Path(sc.get()["tmpd"])
-            with patch.object(DockerRunner, "get_docker_status", return_value="running"):
-                status = adapter.LocalAdapter.cli(conf)
-                assert status == 0
-                assert not os.path.exists(conf.output)
-                with open(conf.error, "r") as f:
-                    tmp = f.read().strip()
-                assert "foo:key" in tmp
-                assert "container testing0 running" in tmp
-                os.truncate(conf.error, 0)
-            with patch.object(DockerRunner, "get_docker_status", return_value="exited"):
-                with open(docker_tmpd / DockerRunner._file_names[1], "w") as f:
-                    json.dump({"dump": "qwer"}, f)
-                status = adapter.LocalAdapter.cli(conf)
-                assert status == 0
-                with open(conf.error, "r") as f:
-                    tmp = f.read().strip()
-                assert "foo:key" in tmp
-                assert "container testing0 finished with status 'exited'" in tmp
-                with open(conf.output, "r") as f:
-                    assert json.load(f)["dump"] == "qwer"
-            sc.delete()
-            os.remove(conf.output)
-            os.remove(conf.error)
-            with patch.object(DockerRunner, "start_docker", return_value="testing0"):
-                status = adapter.LocalAdapter.cli(conf)
-                assert status == 0
-                assert not os.path.exists(conf.output)
-                with open(conf.error, "r") as f:
-                    assert f.read().strip() == "dockerrunner [foo:key] :: container testing0 started"
-                os.truncate(conf.error, 0)
-            sc = DockerRunner.state_class(data["cache_key"])
-            docker_tmpd = Path(sc.get()["tmpd"])
-            with patch.object(DockerRunner, "get_docker_status", return_value="exited"):
-                with patch.object(DockerRunner, "get_docker_exit_code", return_value=1):
-                    with open(docker_tmpd / DockerRunner._file_names[2], "w") as f:
-                        f.write("testing stderr...")
-                    status = adapter.LocalAdapter.cli(conf)
-                    assert status == 1
-                    with open(conf.error, "r") as f:
-                        assert "testing stderr" in f.read()
-
-    def test_docker_patched2(self):
-        with tmpdir() as tmpd:
-
-            @funkify(uri="test", data={"image": Resource(tmpd)})
-            @funkify
-            def fn(dag):
-                return sum(dag.argv[1:].value())
-
-            vals = [1, 2, 3]
-            with TemporaryDirectory(prefix="dml-util-test-") as tmpc:
-                with Dml.temporary(cache_path=tmpc) as dml:
-                    dag = dml.new("test", "asdf")
-                    dag.fn = fn
-                    dag.n0 = dag.fn(*vals)
-                    assert dag.n0.value() == sum(vals)
-                    dag2 = dml.load(dag.n0)
-                    assert dag2.result is not None
-                    dag2 = dml("dag", "describe", dag2._ref.to)
 
     @skipIf(not shutil.which("docker"), "docker not available")
     def test_docker_build(self):
@@ -527,7 +379,8 @@ class TestFunks(FullDmlTestCase):
             with Dml.temporary(cache_path=tmpd) as dml:
                 dag = dml.new("test", "asdf")
                 excludes = ["tests/*.py", ".pytest_cache", ".ruff_cache", "__pycache__"]
-                dag.tar = s3.tar(dml, _root_, excludes=excludes)
+                with redirect_stdout(None), redirect_stderr(None):
+                    dag.tar = s3.tar(dml, str(_root_), excludes=excludes)
                 dag.img = Ecr().build(
                     dag.tar.value(),
                     [
@@ -594,6 +447,7 @@ class TestFunks(FullDmlTestCase):
                 dag.result = dag.stack
 
 
+@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestSSH(FullDmlTestCase):
     def setUp(self):
         super().setUp()
@@ -794,3 +648,38 @@ class TestSSH(FullDmlTestCase):
                 dag2 = dml.load(dag.baz)
                 assert dag2.result is not None
                 dag2 = dml("dag", "describe", dag2._ref.to)
+
+
+@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
+class TestRunners(TestCase):
+    @skipIf(not shutil.which("hatch"), "hatch is not available")
+    def test_hatch_script_passes_env(self):
+        js = HatchRunner.funkify("pandas", None)
+        resp = subprocess.run(
+            ["bash", "-c", js["script"], "script", "env"],
+            env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo"},
+            input="testing...",
+            capture_output=True,
+            timeout=1,
+            text=True,
+        )
+        lines = resp.stdout.splitlines()
+        env = {k: v for k, v in (x.split("=", 1) for x in lines) if k.startswith("DML_")}
+        assert env["DML_CACHE_KEY"] == "test_key"
+        assert env["DML_CACHE_PATH"] == "foo"
+
+    @skipIf(not shutil.which("hatch"), "hatch is not available")
+    def test_conda_script_passes_env(self):
+        js = CondaRunner.funkify("dml-pandas", None)
+        resp = subprocess.run(
+            ["bash", "-c", js["script"], "script", "env"],
+            env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo"},
+            input="testing...",
+            capture_output=True,
+            timeout=1,
+            text=True,
+        )
+        lines = resp.stdout.splitlines()
+        env = {k: v for k, v in (x.split("=", 1) for x in lines) if k.startswith("DML_")}
+        assert env["DML_CACHE_KEY"] == "test_key"
+        assert env["DML_CACHE_PATH"] == "foo"

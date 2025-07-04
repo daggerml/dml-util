@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from daggerml import Node, Resource
-
-from dml_util.baseutil import _run_cli, get_client
+from dml_util.aws import get_client
+from dml_util.core.daggerml import Node, Resource
+from dml_util.core.utils import _run_cli
 
 if TYPE_CHECKING:
     import boto3  # noqa: F401

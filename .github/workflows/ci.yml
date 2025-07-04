@@ -20,10 +20,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[test]
       - name: pytest
-        run: python -m pytest ./tests/test_baseutil.py
+        run: pytest ./tests/unit/
     env:
-      DML_S3_BUCKET: doesnotexist
-      DML_S3_PREFIX: foopy
+      DML_RUN_SLOW_TESTS: true
   test:
     strategy:
       matrix:
@@ -48,12 +47,9 @@ jobs:
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
           conda run -n dml-pandas pip install .[nb,test] ./submodules/*
       - name: pytest
-        run: python -m pytest -m "not slow" .
+        run: python -m pytest
     env:
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_REGION: us-east-1
-      DML_S3_BUCKET: doesnotexist
-      DML_S3_PREFIX: foopy
+      DML_RUN_SLOW_TESTS: true
   lint:
     runs-on: ubuntu-latest
     steps:

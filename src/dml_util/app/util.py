@@ -4,7 +4,7 @@ from pprint import pformat
 from daggerml import Error, Resource
 from daggerml.core import Ref
 
-from dml_util.baseutil import S3Store
+from dml_util.aws.s3 import S3Store
 
 
 def get_sub(resource):

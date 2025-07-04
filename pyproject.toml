@@ -27,15 +27,13 @@ classifiers = [
 ]
 dependencies = [
   "boto3",
-  "psutil",
-  "pyyaml",
-  "watchtower",
 ]
 
 [project.optional-dependencies]
 dml = [
   "daggerml==0.0.34",
-  "daggerml-cli==0.0.29",
+  "daggerml-cli==0.0.30",
+  "watchtower",
 ]
 nb = [
   "jupyter",
@@ -44,12 +42,13 @@ nb = [
 app = ["flask==3.1.0"]
 test = [
   "pytest",
+  "pytest-cov",
   "moto[all,server]",
 ]
 
 [project.scripts]
-dml-util-lambda-adapter = "dml_util.adapter:LambdaAdapter.cli"
-dml-util-local-adapter = "dml_util.adapter:LocalAdapter.cli"
+dml-util-lambda-adapter = "dml_util.adapters:LambdaAdapter.cli"
+dml-util-local-adapter = "dml_util.adapters:LocalAdapter.cli"
 dml-util-dag = "dml_util.dags:main"
 dml-ui = "dml_util.app.impl:run"
 
@@ -96,7 +95,7 @@ pre-install-commands = [
 ]
 
 [tool.hatch.envs.default.scripts]
-test = 'pytest . {args}'
+test = 'pytest {args}'
 dml-build = "hatch build && twine upload -r {args:testpypi} dist/*"
 
 [tool.hatch.envs.default.env-vars]
@@ -117,18 +116,25 @@ template = "default"
 features = ["dml", "app"]
 dependencies = []
 
+[tool.hatch.envs.app.env-vars]
+DML_REPO = "test"
+DML_S3_BUCKET = "dml-asdf-test"
+DML_S3_PREFIX = "jobs"
+DML_TESTING = "1"
+
 [tool.hatch.envs.test-all]
 template = "default"
 
 [[tool.hatch.envs.test-all.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
-[tool.hatch.envs.test-baseutil]
+[tool.hatch.envs.no-dml]
 python="3.10"
 features = ["test"]
 dependencies = []
+pre-install-commands = []
 
-[tool.hatch.envs.test-baseutil.env-vars]
+[tool.hatch.envs.no-dml.env-vars]
 PYTHONDONTWRITEBYTECODE = "1"
 AWS_ACCESS_KEY_ID  = "doesnotexist"
 AWS_SECRET_ACCESS_KEY  = "doesnotexist"
@@ -140,9 +146,12 @@ target-version = "py39"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "I", "PGH004"]
-ignore = []
+select = ["E", "F", "B", "I", "PGH004", "PT", "W"]
+ignore = ["PT004", "PT005", "PT009", "PT027"]
 unfixable = ["B"]
+
+[tool.ruff.lint.flake8-pytest-style]
+parametrize-names-type = "csv"
 
 [tool.ruff.lint.isort]
 known-first-party = ["dml_util"]

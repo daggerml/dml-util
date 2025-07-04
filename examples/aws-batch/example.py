@@ -8,9 +8,11 @@ from pathlib import Path
 
 from daggerml import Dml
 
+import dml_util
 from dml_util import S3Store, dkr_build, funkify
 
-_root_ = Path(__file__).parent.parent.parent.parent.parent
+_root_ = Path(dml_util.__file__).parent.parent.parent  # repo root
+print(f"Using repo root: {_root_}")
 
 
 @funkify
@@ -27,7 +29,7 @@ if __name__ == "__main__":
         dag.batch = dml.load("batch").result
         dag.ecr = dml.load("ecr").result
 
-        dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
+        dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py", "examples/*"])
         dag.bld = dkr_build
         dag.img = dag.bld(
             dag.tar,
@@ -45,7 +47,15 @@ if __name__ == "__main__":
             "--add-host=host.docker.internal:host-gateway",
             "-v",
             f"{os.environ['HOME']}/.aws/credentials:/root/.aws/credentials:ro",
+            "-e",
+            "AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials",
+            "-e",
+            "AWS_DEFAULT_REGION=us-west-2",
+            "-e",
+            "AWS_REGION=us-west-2",
         ]
+        if "AWS_PROFILE" in os.environ:
+            flags += ["-e", f"AWS_PROFILE={os.environ['AWS_PROFILE']}"]
         dag.local_fn = funkify(
             fn,
             "docker",
