@@ -147,7 +147,7 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "I", "PGH004", "PT", "W"]
-ignore = ["PT004", "PT005", "PT009", "PT027"]
+ignore = ["PT009", "PT027"]
 unfixable = ["B"]
 
 [tool.ruff.lint.flake8-pytest-style]

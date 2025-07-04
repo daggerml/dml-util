@@ -12,14 +12,7 @@ import pytest
 from dml_util.adapters import LambdaAdapter
 from dml_util.core.config import EnvConfig
 from dml_util.runners.batch import BatchRunner
-
-
-class Config:
-    def __init__(self, **kwargs):
-        self.__dict__.update(**kwargs)
-
-    def __getattr__(self, item):
-        return self.__dict__.get(item, None)
+from tests.util import Config
 
 
 class IO(StringIO):
@@ -92,6 +85,8 @@ def lambda_mock(fn):
         event = json.loads(Payload)
         context = kw
         return {"Payload": Config(read=lambda: json.dumps(fn(event, context)))}
+    # return a mock with a `invoke` method
+    inner.invoke = lambda Payload, **kw: inner(Payload, **kw)
     return inner
 
 
@@ -144,9 +139,7 @@ def test_local_batch_execution(mock_submit, mock_batch_client):
 
     # Mock the AWS Batch and Lambda clients
     with patch.object(BatchRunner, "client", mock_batch_client), \
-         patch.object(LambdaAdapter.CLIENT, "invoke", new=lambda_mock(BatchRunner.handler)):
-
-        # Add the job to the mock batch client
+         patch.object(LambdaAdapter, "client", new=lambda_mock(BatchRunner.handler)):
         mock_batch_client.jobs[job_id] = {
             "jobId": job_id,
             "status": "SUBMITTED",
@@ -213,8 +206,7 @@ def test_local_batch_failed_job(mock_submit, mock_batch_client):
 
     # Mock the AWS BatchRunner and Lambda clients
     with patch.object(BatchRunner, "client", mock_batch_client), \
-         patch.object(LambdaAdapter.CLIENT, "invoke", new=lambda_mock(BatchRunner.handler)):
-
+         patch.object(LambdaAdapter, "client", new=lambda_mock(BatchRunner.handler)):
         # Add the job to the mock batch client
         mock_batch_client.jobs[job_id] = {
             "jobId": job_id,
@@ -276,12 +268,9 @@ def test_local_batch_no_output(mock_submit, mock_batch_client):
     job_id = "job-" + str(uuid.uuid4())
     job_def = "arn:aws:batch:us-east-1:123456789012:job-definition/test-job-def"
     mock_submit.return_value = {"job_def": job_def, "job_id": job_id}
-
     # Mock the AWS BatchRunner and Lambda clients
     with patch.object(BatchRunner, "client", mock_batch_client), \
-         patch.object(LambdaAdapter.CLIENT, "invoke", new=lambda_mock(BatchRunner.handler)):
-
-        # Add the job to the mock batch client
+         patch.object(LambdaAdapter, "client", new=lambda_mock(BatchRunner.handler)):
         mock_batch_client.jobs[job_id] = {
             "jobId": job_id,
             "status": "SUBMITTED",

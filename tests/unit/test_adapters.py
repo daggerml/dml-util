@@ -242,7 +242,7 @@ class TestLambdaAdapter:
     def mock_lambda_client(self):
         """Set up a mock Lambda client."""
 
-        with patch("dml_util.adapters.lambda_.LambdaAdapter.CLIENT") as mock_client:
+        with patch("dml_util.adapters.lambda_.LambdaAdapter.client") as mock_client:
             yield mock_client
 
     def test_lambda_adapter_send_to_remote_success(self, test_config, mock_lambda_client):

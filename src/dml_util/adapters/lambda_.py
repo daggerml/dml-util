@@ -8,6 +8,7 @@ passing environment variables and configuration along.
 import json
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
 
 from dml_util.adapters.base import AdapterBase
 from dml_util.aws import maybe_get_client
@@ -16,13 +17,23 @@ from dml_util.core.daggerml import Error
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    import boto3
+
 
 @dataclass
 class LambdaAdapter(AdapterBase):
     """AWS Lambda adapter."""
 
+    _client: Optional["boto3.client"] = None
     ADAPTER = "dml-util-lambda-adapter"
-    CLIENT = maybe_get_client("lambda")
+
+    @property
+    def client(self):
+        """Return the AWS Lambda client."""
+        if self._client is None:
+            self._client = maybe_get_client("lambda")
+        return self._client
 
     @classmethod
     def send_to_remote(cls, uri, config: EnvConfig, dump: str) -> tuple[str, str]:
@@ -42,7 +53,7 @@ class LambdaAdapter(AdapterBase):
         tuple[str, str]
             A tuple of (response, message).
         """
-        response = cls.CLIENT.invoke(
+        response = cls.client.invoke(
             FunctionName=uri,
             InvocationType="RequestResponse",
             LogType="Tail",

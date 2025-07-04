@@ -34,6 +34,14 @@ def ls_r(path):
     return [rel_to(x, path) for x in glob(f"{path}/**", recursive=True)]
 
 
+class Config:
+    def __init__(self, **kwargs):
+        self.__dict__.update(**kwargs)
+
+    def __getattr__(self, item):
+        return self.__dict__.get(item, None)
+
+
 class AwsTestCase(TestCase):
     def setUp(self):
         # clear out env variables for safety
