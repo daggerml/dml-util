@@ -47,7 +47,7 @@ class TestS3Store:
             ("test-prefix/", "test.txt", "s3://test-bucket/test-prefix/test.txt"),
             ("test-prefix/subdir", "test.txt", "s3://test-bucket/test-prefix/subdir/test.txt"),
             ("", "s3://other-bucket/some/key.txt", "s3://other-bucket/some/key.txt"),  # full S3 URI
-            ("test-prefix", Resource("s3://other-bucket/some/key.txt"), "s3://other-bucket/some/key.txt"),  # Resource object
+            ("test-prefix", Resource("s3://other-bucket/some/key.txt"), "s3://other-bucket/some/key.txt"),  # Resource
         ],
     )
     def test_name2uri(self, prefix, name, expected_uri):
