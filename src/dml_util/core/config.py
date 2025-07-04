@@ -8,6 +8,7 @@ DaggerML adapters are configured in two main ways:
 import json
 import os
 from dataclasses import asdict, dataclass
+from typing import Union
 from uuid import uuid4
 
 from dml_util.core.utils import js_dump
@@ -92,7 +93,7 @@ class InputConfig:
 
     cache_path: str
     cache_key: str
-    kwargs: dict | None
+    kwargs: Union[dict, type(None)]
     dump: str
 
     def get_sub(self):

@@ -122,10 +122,10 @@ DML_S3_BUCKET = "dml-asdf-test"
 DML_S3_PREFIX = "jobs"
 DML_TESTING = "1"
 
-[tool.hatch.envs.test-all]
+[tool.hatch.envs.test-matrix]
 template = "default"
 
-[[tool.hatch.envs.test-all.matrix]]
+[[tool.hatch.envs.test-matrix.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.no-dml]

@@ -14,6 +14,8 @@ from uuid import uuid4
 import boto3
 from botocore.exceptions import NoCredentialsError
 
+from dml_util.aws import get_client
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -28,7 +30,7 @@ class Streamer:
     buffer_lock: threading.Lock = field(default_factory=threading.Lock)
     thread: threading.Thread = field(init=False)
     stop: threading.Event = field(default_factory=threading.Event)
-    client: boto3.client = field(default_factory=lambda: boto3.client("logs"))
+    client: boto3.client = field(default_factory=lambda: get_client("logs"))
 
     def __post_init__(self):
         self.thread = threading.Thread(target=self._send_logs)
