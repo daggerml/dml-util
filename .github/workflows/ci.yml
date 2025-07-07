@@ -21,8 +21,6 @@ jobs:
           pip install .[test]
       - name: pytest
         run: pytest ./tests/unit/
-    env:
-      DML_RUN_SLOW_TESTS: true
   test:
     strategy:
       matrix:
@@ -48,8 +46,6 @@ jobs:
           conda run -n dml-pandas pip install .[nb,test] ./submodules/*
       - name: pytest
         run: pytest
-    env:
-      DML_RUN_SLOW_TESTS: true
   lint:
     runs-on: ubuntu-latest
     steps:
