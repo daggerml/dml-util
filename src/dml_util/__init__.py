@@ -8,7 +8,7 @@ except ImportError:
 
 # to register adapters, runners, and patches
 import dml_util.adapters
-import dml_util.runners  # to `register`
+import dml_util.runners
 
 # Import core utilities that have no daggerml dependency
 # Import adapters
@@ -18,10 +18,7 @@ from dml_util.core.daggerml import has_daggerml
 from dml_util.core.utils import dict_product, tree_map
 
 try:
-    # requires daggerml
     import dml_util.wrapper  # to `new_dag` patch
-
-    # Import AWS utilities
     from dml_util import funk  # imported in advance for funkify
     from dml_util.funk import aws_fndag, dkr_build, funkify
 except ImportError:

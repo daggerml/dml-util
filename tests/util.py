@@ -19,7 +19,6 @@ S3_PREFIX = "foopy/barple"
 # All pytest fixtures have been moved to conftest.py
 
 _root_ = Path(__file__).parent.parent
-RUN_SLOW_TESTS = bool(os.getenv("DML_RUN_SLOW_TESTS"))
 
 
 def tmpdir():

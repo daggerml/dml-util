@@ -39,7 +39,6 @@ nb = [
   "jupyter",
   "nbconvert",
 ]
-app = ["flask==3.1.0"]
 test = [
   "pytest",
   "pytest-cov",
@@ -65,7 +64,6 @@ testpaths = [
 ]
 markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-  "serial",
 ]
 
 [tool.hatch.version]

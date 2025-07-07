@@ -34,7 +34,21 @@ class State:
         Release any locks on the state.
     """
 
-    pass
+    def put(self, state):
+        """Store state information."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def get(self):
+        """Retrieve state information."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def delete(self):
+        """Delete state information."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def unlock(self):
+        """Release any locks on the state."""
+        raise NotImplementedError("Subclasses must implement this method.")
 
 
 @dataclass

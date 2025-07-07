@@ -12,10 +12,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from textwrap import dedent
-from unittest import TestCase, skipIf, skipUnless
+from unittest import TestCase, skipIf
 from unittest.mock import patch
 
 import boto3
+import pytest
 
 import dml_util.adapters as adapter
 import dml_util.wrapper  # noqa: F401
@@ -26,7 +27,6 @@ from dml_util.funk import funkify
 from dml_util.lib.dkr import Ecr
 from dml_util.runners import CondaRunner, HatchRunner
 from tests.util import (
-    RUN_SLOW_TESTS,
     S3_BUCKET,
     S3_PREFIX,
     Config,
@@ -35,10 +35,10 @@ from tests.util import (
     tmpdir,
 )
 
+pytestmark = pytest.mark.slow  # marks the entire file as slow for pytest.
 VALID_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+")
 
 
-@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestTooling(FullDmlTestCase):
     def test_s3_uri(self):
         s3 = S3Store()
@@ -212,7 +212,6 @@ class TestTooling(FullDmlTestCase):
                     d0.n0 = d0.f0(1, 0)
 
 
-@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestFunks(FullDmlTestCase):
     @skipIf(not shutil.which("hatch"), "hatch is not available")
     def test_hatch(self):
@@ -436,11 +435,10 @@ class TestFunks(FullDmlTestCase):
                 dag = dml.new("foo")
                 dag.cfn = Resource("cfn", adapter="dml-util-local-adapter")
                 dag.stack = dag.cfn("stacker", tpl, {})
-                self.assertCountEqual(dag.stack.keys().value(), ["BucketName", "BucketArn"])
+                self.assertCountEqual(dag.stack.keys(), ["BucketName", "BucketArn"])
                 dag.result = dag.stack
 
 
-@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestSSH(FullDmlTestCase):
     def setUp(self):
         super().setUp()
@@ -643,7 +641,6 @@ class TestSSH(FullDmlTestCase):
                 dag2 = dml("dag", "describe", dag2._ref.to)
 
 
-@skipUnless(RUN_SLOW_TESTS, "Skipping slow tests")
 class TestRunners(TestCase):
     @skipIf(not shutil.which("hatch"), "hatch is not available")
     def test_hatch_script_passes_env(self):

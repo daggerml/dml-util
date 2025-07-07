@@ -56,6 +56,9 @@ if __name__ == "__main__":
         ]
         if "AWS_PROFILE" in os.environ:
             flags += ["-e", f"AWS_PROFILE={os.environ['AWS_PROFILE']}"]
+        dag.no_docker_fn = fn
+        no_docker_sum = dag.no_docker_fn(*vals, name="no_docker_sum")
+        print(f"{dag.no_docker_fn.value() = }")
         dag.local_fn = funkify(
             fn,
             "docker",
@@ -67,10 +70,10 @@ if __name__ == "__main__":
         print("........")
         print(f"{local_sum.value() = }")
         print("........")
-        dag.fn = funkify(fn, data={"image": dag.img.value()}, adapter=dag.batch.value())
-        print(f"{dag.fn.value() = }")
-        dag.sum = dag.fn(*vals)
-        assert dag.sum.value() == sum(vals[:-1]) / vals[-1]
+        dag.batch_fn = funkify(fn, data={"image": dag.img.value()}, adapter=dag.batch.value())
+        print(f"{dag.batch_fn.value() = }")
+        dag.batch_sum = dag.batch_fn(*vals)
+        assert dag.batch_sum.value() == sum(vals[:-1]) / vals[-1]
 
         dag.result = dag.sum
         print(f"{dag.sum.value() = }")
