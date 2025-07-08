@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 from dml_util import __version__
-from dml_util.baseutil import S3Store
+from dml_util.aws.s3 import S3Store
 
 _here_ = Path(__file__).parent
 LOCAL_TEST = os.getenv("DML_TESTING")
@@ -41,6 +41,7 @@ def load():
     with open(_here_ / "cf.json") as f:
         js = json.load(f)
     zipfile = zip_up(s3, _here_ / "impl.py")
+    print(f"zipfile: {zipfile.uri}")
     code_data = dict(zip(["S3Bucket", "S3Key"], s3.parse_uri(zipfile.uri)))
     js["Resources"]["Fn"]["Properties"]["Code"] = code_data
     params = {"Bucket": s3.bucket, "Prefix": "opt/dml/exec/batch"}

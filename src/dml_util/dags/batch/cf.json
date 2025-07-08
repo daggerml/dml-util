@@ -228,6 +228,28 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": { "Fn::Sub": "${AWS::StackName}-logs" },
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                    "logs:CreateLogGroup",
+                    "logs:DescribeLogGroups"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:dml:*"
+                    }
+                  ]
+                }
+              ]
+            }
           }
         ]
       }
@@ -443,8 +465,6 @@
         "MemorySize": 128,
         "Environment": {
           "Variables": {
-            "DML_S3_PREFIX": { "Ref": "Prefix" },
-            "DML_S3_BUCKET": { "Ref": "Bucket" },
             "GPU_QUEUE": { "Ref": "GpuJobQueue" },
             "CPU_QUEUE": { "Ref": "CpuJobQueue" },
             "DYNAMODB_TABLE": { "Ref": "JobTable" },
