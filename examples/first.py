@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""# A first example dag
+
+In this dag we will show
+
+1. How to use `funkify` to execute local functions.
+2. How dml functions are cached, even nested functions.
+"""
 import argparse
 import getpass
 import logging
@@ -78,10 +85,15 @@ def process_data(dag):
     return dag.result
 
 
-def create_sample_dags(dml):
-    """Create sample DAGs with different functions and data flows"""
-    logger.info("Creating sample DAGs...")
-    with dml.new("simple_addition", "Basic fnapp examples") as dag:
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Create sample DAGs for DaggerML")
+    parser.add_argument("--config_dir", type=str, default=None, help="Directory for DaggerML configuration")
+    parser.add_argument("--repo", type=str, default=None, help="DaggerML repository path")
+    parser.add_argument("--user", type=str, default=getpass.getuser(), help="DaggerML user name (optional)")
+    args = parser.parse_args()
+
+    dml = Dml(config_dir=args.config_dir, repo=args.repo, user=args.user)
+    with dml.new("first_dag", __doc__) as dag:
         logger.info("Instantiating datasets")
         dag.data = {
             "small": [1, 2, 3, 4, 5],
@@ -109,18 +121,6 @@ def create_sample_dags(dml):
 
         # commit the DAG
         dag.result = {"sums": dag.sums, "stats": dag.stats, "processed": dag.processed}
-
     created_dags = [x["name"] for x in dml("dag", "list")]
     logger.info("Sample DAGs created successfully: %s", created_dags)
     logger.info("To view the DAGs, run: python dev/run_ui.py")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Create sample DAGs for DaggerML")
-    parser.add_argument("--config_dir", type=str, default=None, help="Directory for DaggerML configuration")
-    parser.add_argument("--repo", type=str, default=".", help="DaggerML repository path")
-    parser.add_argument("--user", type=str, default=getpass.getuser(), help="DaggerML user name (optional)")
-    args = parser.parse_args()
-
-    dml = Dml(config_dir=args.config_dir, repo=args.repo, user=args.user)
-    create_sample_dags(dml)
