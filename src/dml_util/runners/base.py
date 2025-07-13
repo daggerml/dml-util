@@ -79,7 +79,12 @@ class RunnerBase:
         self.state.put(state)
 
     def run(self):
-        """Run the task and return the result."""
+        """Run the task and return the result.
+
+        This method handles acquiring the job lock, updating the state, and
+        returning the response and message. The main logic of the task is
+        implemented in the `update` method, which must be defined by subclasses.
+        """
         state = self.state.get()
         if state is None:
             return None, self._fmt("Could not acquire job lock")
@@ -104,7 +109,10 @@ class RunnerBase:
                 self.state.unlock()
 
     def update(self, state):
-        """Update the state and return the new state, message, and response."""
+        """Update the state and return the new state, message, and response.
+
+        The `gc` method is called if and only if the returned state is None.
+        """
         raise NotImplementedError("Runner.update must be implemented by subclasses")
 
     def gc(self, state):

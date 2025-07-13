@@ -95,8 +95,6 @@ test = 'pytest {args}'
 dml-build = "hatch build && twine upload -r {args:testpypi} dist/*"
 [tool.hatch.envs.default.env-vars]
 PYTHONDONTWRITEBYTECODE = "1"
-DML_S3_BUCKET = "dml-doesnotexist"
-DML_S3_PREFIX = "jobs"
 
 [tool.hatch.envs.pandas]
 template = "default"
@@ -119,8 +117,6 @@ pre-install-commands = []
 PYTHONDONTWRITEBYTECODE = "1"
 AWS_ACCESS_KEY_ID  = "doesnotexist"
 AWS_SECRET_ACCESS_KEY  = "doesnotexist"
-DML_S3_BUCKET = "dml-doesnotexist"
-DML_S3_PREFIX = "jobs"
 
 [tool.ruff]
 target-version = "py39"

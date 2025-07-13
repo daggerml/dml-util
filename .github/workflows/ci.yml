@@ -45,7 +45,9 @@ jobs:
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
           conda run -n dml-pandas pip install .[nb,test] ./submodules/*
       - name: pytest
-        run: pytest
+        run: |
+          pytest
+          pytest --doctest-modules src/
   lint:
     runs-on: ubuntu-latest
     steps:

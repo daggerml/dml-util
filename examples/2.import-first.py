@@ -45,7 +45,7 @@ def create_sample_dags(dml):
     logger.info("Creating sample DAGs...")
     with dml.new("second_dag", __doc__) as dag:
         logger.info("Instantiating datasets")
-        first_result = dag._put(dml.load("simple_addition").result, name="first_result")
+        first_result = dag._put(dml.load("first_dag").result, name="first_result")
         add_fn = dag._put(add_numbers, name="add_numbers")
         dag.result = [add_fn(first_result, x, name=f"add_{x}") for x in range(1, 6)]
 

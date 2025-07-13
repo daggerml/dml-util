@@ -114,7 +114,7 @@ class BatchRunner(LambdaRunner):
             logger.info("job finished successfully and output was written...")
             js = self.s3.get("output.dump").decode()
             logger.info("dump = %r", js)
-            return state, msg, js
+            return None, msg, js
         if not self.s3.exists("output.dump"):
             msg = f"{msg} (no output found)"
         logger.info("file: %r does not exist", self.s3._name2uri("output.dump"))
@@ -124,7 +124,8 @@ class BatchRunner(LambdaRunner):
         raise RuntimeError(f"{msg = }")
 
     def gc(self, state):
-        if state is not None and len(state) > 0:
+        super().gc(state)
+        if state:
             job_id, status = self.describe_job(state)
             try:
                 self.client.cancel_job(jobId=job_id, reason="gc")
@@ -134,11 +135,8 @@ class BatchRunner(LambdaRunner):
             try:
                 self.client.deregister_job_definition(jobDefinition=job_def)
                 logger.info("Successfully deregistered: %r", job_def)
-                return
             except ClientError as e:
                 if e.response.get("Error", {}).get("Code") != "ClientException":
                     raise
                 if "DEREGISTERED" not in e.response.get("Error", {}).get("Message"):
                     raise
-            self.s3.rm(*self.s3.ls(recursive=True))
-        super().gc(state)
