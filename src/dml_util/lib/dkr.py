@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     import boto3  # noqa: F401
 
 
+#TODO @daavid write a new class for local build
 @dataclass
 class Ecr:
     ecr: "boto3.client" = field(default_factory=lambda: get_client("ecr"))
@@ -25,6 +26,7 @@ class Ecr:
         return _run_cli(*args, capture_output=False, **kwargs)
 
     def build(self, tarball, build_flags=(), repo=None):
+       
         p = urlparse(tarball.uri)
         with TemporaryDirectory() as tmpd:
             with NamedTemporaryFile(suffix=".tar") as tmpf:
