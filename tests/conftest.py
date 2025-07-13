@@ -65,6 +65,7 @@ def clear_envvars():
         for k in os.environ:
             if k.startswith("AWS_") or k.startswith("DML_"):
                 del os.environ[k]
+        os.environ["AWS_SHARED_CREDENTIALS_FILE"] = "/dev/null"
         yield
 
 @pytest.fixture(autouse=True)

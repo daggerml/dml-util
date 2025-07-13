@@ -92,6 +92,9 @@ def funkify(
     ... @funkify
     ... def another_function(dag):
     ...     return "This function runs in the `name` hatch env, inside a docker image."
+
+    And later, if you have a batch cluster set up, you can run it in batch:
+    >>> funkify(another_function, data={"image": "my-python:3.8"}, adapter=dag.batch.value())  # doctest: +SKIP
     """
     if fn is None:
         return partial(

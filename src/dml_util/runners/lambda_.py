@@ -21,7 +21,7 @@ class LambdaRunner(RunnerBase):
     def __post_init__(self):
         super().__post_init__()
         self.s3 = S3Store(bucket=self.config.s3_bucket, prefix=f"{self.prefix}/jobs/{self.input.cache_key}")
-        print(f"Initialized LambdaRunner. Writing execution data to s3://{self.s3.bucket}/{self.s3.prefix}")
+        logger.info(f"Initialized LambdaRunner. Writing execution data to s3://{self.s3.bucket}/{self.s3.prefix}")
 
     @property
     def output_loc(self):
@@ -31,7 +31,7 @@ class LambdaRunner(RunnerBase):
     def handler(cls, event, context):
         try:
             event["input"] = json.loads(event.pop("dump"))
-            print(f"Lambda event: {json.dumps(event)}")
+            logger.info(f"Lambda event: {json.dumps(event)}")
             response, msg = cls(**event).run()
             status = 200 if response else 201
             return {"status": status, "response": response, "message": msg}
@@ -40,5 +40,10 @@ class LambdaRunner(RunnerBase):
             return {"status": 400, "response": {}, "message": msg}
 
     def gc(self, state):
-        if self.s3.exists(self.output_loc):
-            self.s3.rm(self.output_loc)
+        """Garbage collect resources used by the runner."""
+        logger.info("Cleaning up resources for key: %s", self.input.cache_key)
+        objs = self.s3.ls(recursive=True)
+        if objs:
+            logger.info("Found %d objects to clean up in S3: s3://%s/%s/", len(objs), self.s3.bucket, self.s3.prefix)
+            self.s3.rm(*objs)
+        logger.info("Cleanup completed for key: %s", self.input.cache_key)

@@ -47,10 +47,9 @@ def test_fails_gracefully():
     try:
         sts_client = boto3.client("sts")
     except NoRegionError:
-        pass
-    else:
-        with pytest.raises(NoCredentialsError):
-            sts_client.get_caller_identity()
+        sts_client = boto3.client("sts", region_name="us-west-2")
+    with pytest.raises(NoCredentialsError):
+        sts_client.get_caller_identity()
     fd_r = MagicMock()
     fd_r.readline.side_effect = ["log1\n", "log2\n", ""]
     streamer = Streamer(LOG_GROUP_NAME, LOG_STREAM_NAME, fd_r)
