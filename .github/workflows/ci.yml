@@ -88,13 +88,20 @@ jobs:
       - name: Download coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: coverage-xml-*
+          pattern: coverage-*
           path: coverage_files
+      - name: List downloaded coverage files
+        run: ls -R coverage_files
       - name: Install coverage and pytest
         run: pip install coverage pytest
+      - name: Combine coverage reports
+        run: |
+          for d in coverage_files/*; do
+            cp "$d/.coverage" ".coverage_$(basename "$d")"
+          done
       - name: Combine coverage files
         run: |
-          cp coverage_files/*/.coverage .  # Copy all .coverage files to root
+          ls -Alh
           coverage combine .coverage*      # Combine all .coverage files
           coverage report                  # Print coverage summary
           coverage xml                     # Optional: generate XML report
