@@ -3,11 +3,6 @@
 This module provides a local adapter for running DaggerML functions.
 The local adapter allows running DaggerML functions in the local environment
 using various runners, such as script runners, conda runners, etc.
-
-Classes
--------
-LocalAdapter
-    Local adapter for running DaggerML functions.
 """
 
 import json

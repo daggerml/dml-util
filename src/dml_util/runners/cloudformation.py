@@ -104,4 +104,5 @@ class CfnRunner(RunnerBase):
             except Exception:
                 pass
             state.clear()
+        state = None if "dump" in result else state
         return state, msg, result.get("dump")

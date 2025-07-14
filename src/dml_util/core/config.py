@@ -19,26 +19,18 @@ class EnvConfig:
     """ENVVARS for a DaggerML run.
 
     This class is used to configure the DaggerML adapter and is typically specified via environment variables.
-
-    Attributes
-    ----------
-    s3_bucket : str
-        S3 bucket for the data store.
-    s3_prefix : str
-        S3 prefix for the data store.
-    debug : bool
-        Debug flag.
-    run_id : str
-        UUID identifying this run.
-    log_group : str
-        Log group for the current function.
     """
 
     s3_bucket: str
+    """S3 bucket for the data store."""
     s3_prefix: str
+    """S3 prefix for the data store."""
     log_group: str
+    """Log group for the current function (executor and jobs will log to here)."""
     run_id: str
+    """UUID identifying this run."""
     debug: bool
+    """Debug flag, if set to True, will enable debug logging and other debug features."""
 
     @classmethod
     def from_env(cls, debug: bool = False) -> "EnvConfig":
@@ -78,23 +70,16 @@ class InputConfig:
     """Configuration for input data.
 
     This class is used to specify the input data configuration for a DaggerML run.
-
-    Attributes
-    ----------
-    cache_path : str
-        Path to the cache directory.
-    cache_key : str
-        The execution's cache key.
-    kwargs : dict | None
-        The function's specific data. May include a sub-adapter and URI.
-    dump : str
-        The dag dump.
     """
 
     cache_path: str
+    """Path to the cache directory."""
     cache_key: str
+    """The execution's cache key."""
     kwargs: Union[dict, type(None)]
+    """The function's specific data. May include a sub-adapter and URI."""
     dump: str
+    """The dag dump, an opaque blob serialized as a string."""
 
     def get_sub(self):
         """Get sub-adapter, URI, and kwargs for the sub function's stdin."""
