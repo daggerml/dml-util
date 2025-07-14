@@ -36,12 +36,13 @@ jobs:
       - name: list files
         run: |
           echo "Files in the current directory:"
+          pwd
           ls -Al
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-no-dml
-          path: ${{ github.workspace }}/.coverage
+          path: ".coverage"
   test:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
         (github.event_name == 'pull_request' && github.base_ref == 'master') ||
