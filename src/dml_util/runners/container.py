@@ -91,7 +91,7 @@ class DockerRunner(RunnerBase):
         msg = f"container {cid} finished with status {status!r}"
         result = if_read_file(f"{tmpd}/{self._file_names[1]}")
         if result:
-            return state, msg, result
+            return None, msg, result
         error_str = if_read_file(f"{tmpd}/{self._file_names[2]}") or ""
         exit_code = self.get_docker_exit_code(cid)
         msg = dedent(

@@ -3,27 +3,6 @@
 This module contains utility functions that are used throughout the DaggerML utilities
 package. These functions have minimal or no external dependencies on DaggerML itself,
 making them suitable for use in environments where DaggerML is not available.
-
-Functions
----------
-tree_map
-    Apply a function to elements of a nested data structure that satisfy a predicate.
-dict_product
-    Generate all combinations of dictionary values for parameter sweeps.
-now
-    Get current time.
-_run_cli
-    Run a command-line program and capture output.
-if_read_file
-    Read a file if it exists.
-proc_exists
-    Check if a process exists.
-js_dump
-    Dump data as JSON with consistent formatting.
-compute_hash
-    Compute hash of a file-like object.
-exactly_one
-    Ensure exactly one of multiple parameters is provided.
 """
 
 import errno
