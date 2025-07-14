@@ -33,10 +33,14 @@ jobs:
           pip install .[test]
       - name: pytest
         run: pytest ./tests/unit/ --cov
+      - name: list files
+        run: |
+          echo "Files in the current directory:"
+          ls -Al
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml-no-dml
+          name: coverage-no-dml
           path: .coverage
   test:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
@@ -66,13 +70,13 @@ jobs:
           conda run -n dml-pandas pip install .[nb,test] ./submodules/*
       - name: pytest
         run: |
-          pytest --cov=src
+          pytest --cov
           pytest --doctest-modules src/
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml-${{ matrix.py }}
-          path: coverage.xml
+          name: coverage-${{ matrix.py }}
+          path: .coverage
   summary:  # a single task that only passes if all tests and linting pass
     needs: [test, lint, test-no-dml]
     runs-on: ubuntu-latest
