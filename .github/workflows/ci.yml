@@ -1,13 +1,11 @@
 name: CI
 on:
   pull_request:
-    branches: [master]
+    branches: ["master"]
   push:
-    branches:
-      - "**"
+    branches: ["*"]  # ["master"]
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+" # Semantic version tags
-  pull_request:
 jobs:
   test-no-dml:
     runs-on: ubuntu-latest
@@ -48,8 +46,13 @@ jobs:
           conda run -n dml-pandas pip install .[nb,test] ./submodules/*
       - name: pytest
         run: |
-          pytest
+          pytest --cov=src --cov-report=xml
           pytest --doctest-modules src/
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-${{ matrix.py }}
+          path: coverage.xml
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -62,6 +65,28 @@ jobs:
         run: pip install ruff
       - name: Run Ruff
         run: ruff check --output-format=github .
+  summary:
+    needs: [test, lint]  # or list all your matrix jobs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-xml-*
+          path: coverage_files
+      - name: Install coverage and pytest
+        run: pip install coverage pytest
+      - name: Combine coverage files
+        run: |
+          # Move all coverage.xml files to root and rename to avoid overwrite
+          for f in coverage_files/*/coverage.xml; do
+            cp "$f" "$(basename $(dirname $f))-coverage.xml"
+          done
+          # Combine coverage files
+          coverage combine $(ls *-coverage.xml)
+          coverage report
+          coverage xml
   publish:
     needs: ["test", "lint", "test-no-dml"]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
