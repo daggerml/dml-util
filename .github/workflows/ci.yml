@@ -7,6 +7,18 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+" # Semantic version tags
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run Ruff
+        run: ruff check --output-format=github .
   test-no-dml:
     runs-on: ubuntu-latest
     steps:
@@ -53,20 +65,8 @@ jobs:
         with:
           name: coverage-xml-${{ matrix.py }}
           path: coverage.xml
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install ruff
-        run: pip install ruff
-      - name: Run Ruff
-        run: ruff check --output-format=github .
-  summary:
-    needs: [test, lint]  # or list all your matrix jobs
+  summary:  # a single task that only passes if all tests and linting pass
+    needs: [test, lint, test-no-dml]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
