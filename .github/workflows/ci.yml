@@ -42,7 +42,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-no-dml
-          path: ".coverage"
+          path: .coverage
+          include-hidden-files: true
   test:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
         (github.event_name == 'pull_request' && github.base_ref == 'master') ||
@@ -78,6 +79,7 @@ jobs:
         with:
           name: coverage-${{ matrix.py }}
           path: .coverage
+          include-hidden-files: true
   summary:  # a single task that only passes if all tests and linting pass
     needs: [test, lint, test-no-dml]
     runs-on: ubuntu-latest
