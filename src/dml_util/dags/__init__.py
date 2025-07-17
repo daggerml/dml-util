@@ -3,13 +3,14 @@ import os
 import pkgutil
 import subprocess
 import sys
+from argparse import ArgumentParser
 from importlib import import_module
 from pathlib import Path
 from time import time
 
 from daggerml import Dml, Resource
 
-from dml_util import __version__
+from dml_util import __version_tuple__
 
 _here_ = Path(__file__).parent
 
@@ -19,8 +20,6 @@ def imp(name):
 
 
 def main():
-    from argparse import ArgumentParser
-
     parser = ArgumentParser(description="Spin up a known cfn stack (in a dag).")
     parser.add_argument("name", nargs="?")
     parser.add_argument("-f", "--filepath")
@@ -33,6 +32,7 @@ def main():
             if os.path.isdir(f"{here}/{x}") and x != "__pycache__":
                 print(x)
         sys.exit(0)
+    version = '-'.join(__version_tuple__[:3])  # drop .dev0 and .post0, etc.
     assert args.name is not None, "name is required unless --list is set"
     with Dml().new(args.name, f"creating {args.name} cfn stack") as dag:
         if args.filepath is None:
@@ -47,7 +47,7 @@ def main():
         dag.output_name = output_name
         dag.cfn_fn = Resource("cfn", adapter="dml-util-local-adapter")
         dag.stack = dag.cfn_fn(
-            (f"dml-v{__version__.replace('.', '-')}-{args.name}" if args.add_version_info else args.name),
+            (f"dml-v{version}-{args.name}" if args.add_version_info else args.name),
             dag.tpl,
             params,
             time(),

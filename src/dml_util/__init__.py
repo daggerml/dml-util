@@ -2,9 +2,10 @@
 
 # Try to import version first
 try:
-    from dml_util.__about__ import __version__
+    from dml_util.__about__ import __version__, __version_tuple__
 except ImportError:
     __version__ = "local"
+    __version_tuple__ = ("local",)
 
 # to register adapters, runners, and patches
 import dml_util.adapters

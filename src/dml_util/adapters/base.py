@@ -7,7 +7,6 @@ such as AWS Lambda or local runners.
 
 import logging
 import logging.config
-import os
 import re
 import sys
 import time
@@ -15,10 +14,7 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-import boto3
-import botocore
-from botocore.exceptions import BotoCoreError, NoRegionError
-
+from dml_util.aws import get_client
 from dml_util.aws.s3 import S3Store
 from dml_util.core.config import EnvConfig
 from dml_util.core.daggerml import Error, Resource
@@ -32,8 +28,7 @@ try:
         def __init__(self, *args, boto3_client=None, **kwargs):
             """Initialize the CloudWatch Log Handler with a safe region detection."""
             self._enabled = False
-            if not boto3_client:
-                boto3_client = boto3.client("logs", region_name=self._detect_region())
+            boto3_client = boto3_client or get_client("logs")
             try:
                 super().__init__(*args, boto3_client=boto3_client, **kwargs)
                 self._enabled = True
@@ -47,17 +42,6 @@ try:
                 super().emit(record)
             except Exception as e:
                 logger.debug(f"Failed to emit to CloudWatch: {e}")
-
-        def _detect_region(self):
-            # Priority: AWS_REGION > AWS_DEFAULT_REGION > boto3 config > fail
-            env_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-            if env_region:
-                return env_region
-            try:
-                session = botocore.session.get_session()
-                return session.get_config_variable("region")
-            except (BotoCoreError, NoRegionError):
-                return None
 except ModuleNotFoundError:
     watchtower = None
 
