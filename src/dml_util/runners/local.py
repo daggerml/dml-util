@@ -158,6 +158,24 @@ class HatchRunner(WrappedRunner):
         return WrappedRunner.funkify(script, sub)
 
 
+class UvRunner(WrappedRunner):
+    """Runs a script in a UV environment."""
+
+    @classmethod
+    def funkify(cls, sub, path=None):
+        cd_str = "" if path is None else f"cd {shlex.quote(path)}"
+        script = dedent(
+            f"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            {cd_str}
+            uv run "$@"
+            """
+        ).strip()
+        return WrappedRunner.funkify(script, sub)
+
+
 class CondaRunner(WrappedRunner):
     """Runs a script in a Conda environment."""
 

@@ -9,7 +9,7 @@ from dml_util.runners.base import RunnerBase
 from dml_util.runners.batch import BatchRunner
 from dml_util.runners.container import DockerRunner, Test
 from dml_util.runners.lambda_ import LambdaRunner
-from dml_util.runners.local import CondaRunner, HatchRunner, ScriptRunner, WrappedRunner
+from dml_util.runners.local import CondaRunner, HatchRunner, ScriptRunner, UvRunner, WrappedRunner
 from dml_util.runners.remote import SshRunner
 
 try:
