@@ -5,7 +5,7 @@ on:
   push:
     branches: ["*"]  # ["master"]
     tags:
-      - "v.+" # Semantic version tags
+      - "v*" # Semantic version tags
 jobs:
   lint:
     runs-on: ubuntu-latest
