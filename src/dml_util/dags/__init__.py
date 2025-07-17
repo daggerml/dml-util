@@ -3,6 +3,7 @@ import os
 import pkgutil
 import subprocess
 import sys
+from argparse import ArgumentParser
 from importlib import import_module
 from pathlib import Path
 from time import time
@@ -19,8 +20,6 @@ def imp(name):
 
 
 def main():
-    from argparse import ArgumentParser
-
     parser = ArgumentParser(description="Spin up a known cfn stack (in a dag).")
     parser.add_argument("name", nargs="?")
     parser.add_argument("-f", "--filepath")
@@ -37,17 +36,20 @@ def main():
     with Dml().new(args.name, f"creating {args.name} cfn stack") as dag:
         if args.filepath is None:
             mod = imp(args.name)
-            tpl, params, output_name, adapter = mod.load()
+            tpl, params, output_name, adapter, version = mod.load()
         else:
             resp = subprocess.run([args.filepath], check=True, capture_output=True, text=True)
-            tpl, params, output_name, adapter = json.loads(resp.stdout)
+            tpl, params, output_name, adapter, version = json.loads(resp.stdout)
         dag.tpl = tpl
         dag.params = params
         dag.adapter = adapter
         dag.output_name = output_name
         dag.cfn_fn = Resource("cfn", adapter="dml-util-local-adapter")
+        name = f"dml-{args.name}"
+        if args.add_version_info:
+            name = f"{name}-v{version}"
         dag.stack = dag.cfn_fn(
-            (f"dml-v{__version__.replace('.', '-')}-{args.name}" if args.add_version_info else args.name),
+            name,
             dag.tpl,
             params,
             time(),

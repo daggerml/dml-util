@@ -10,6 +10,7 @@ from dml_util.aws.s3 import S3Store
 
 _here_ = Path(__file__).parent
 LOCAL_TEST = os.getenv("DML_TESTING")
+VERSION = 0
 
 
 def zipit(directory_path, output_zip):
@@ -45,4 +46,4 @@ def load():
     code_data = dict(zip(["S3Bucket", "S3Key"], s3.parse_uri(zipfile.uri)))
     js["Resources"]["Fn"]["Properties"]["Code"] = code_data
     params = {"Bucket": s3.bucket, "Prefix": "opt/dml/exec/batch"}
-    return js, params, "LambdaFunctionArn", "dml-util-lambda-adapter"
+    return js, params, "LambdaFunctionArn", "dml-util-lambda-adapter", VERSION
