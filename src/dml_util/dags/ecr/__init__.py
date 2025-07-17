@@ -9,7 +9,7 @@ VERSION = 0
 def load():
     with open(_here_ / "cf.json") as f:
         js = json.load(f)
-    return js, {}, "Uri", None, 0
+    return js, {}, "Uri", None
 
 
 if __name__ == "__main__":

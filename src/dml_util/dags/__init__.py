@@ -10,7 +10,7 @@ from time import time
 
 from daggerml import Dml, Resource
 
-from dml_util import __version__
+from dml_util import __version_tuple__
 
 _here_ = Path(__file__).parent
 
@@ -32,24 +32,22 @@ def main():
             if os.path.isdir(f"{here}/{x}") and x != "__pycache__":
                 print(x)
         sys.exit(0)
+    version = '-'.join(__version_tuple__[:3])  # drop .dev0 and .post0, etc.
     assert args.name is not None, "name is required unless --list is set"
     with Dml().new(args.name, f"creating {args.name} cfn stack") as dag:
         if args.filepath is None:
             mod = imp(args.name)
-            tpl, params, output_name, adapter, version = mod.load()
+            tpl, params, output_name, adapter = mod.load()
         else:
             resp = subprocess.run([args.filepath], check=True, capture_output=True, text=True)
-            tpl, params, output_name, adapter, version = json.loads(resp.stdout)
+            tpl, params, output_name, adapter = json.loads(resp.stdout)
         dag.tpl = tpl
         dag.params = params
         dag.adapter = adapter
         dag.output_name = output_name
         dag.cfn_fn = Resource("cfn", adapter="dml-util-local-adapter")
-        name = f"dml-{args.name}"
-        if args.add_version_info:
-            name = f"{name}-v{version}"
         dag.stack = dag.cfn_fn(
-            name,
+            (f"dml-v{version}-{args.name}" if args.add_version_info else args.name),
             dag.tpl,
             params,
             time(),
