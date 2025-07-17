@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 _here_ = Path(__file__).parent
-VERSION = 0
 
 
 def load():
