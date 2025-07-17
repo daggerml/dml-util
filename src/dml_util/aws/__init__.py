@@ -14,8 +14,12 @@ logger = logging.getLogger(__name__)
 
 def _get_region_from_metadata():
     """
-    Attempt to retrieve AWS region from ECS or EC2 metadata.
-    Supports both ECS (Batch) and EC2 environments.
+    Attempts to retrieve the AWS region from ECS or EC2 metadata.
+
+    Returns
+    -------
+    Optional[str]
+        The AWS region string if found, otherwise None.
     """
     # ECS (used in AWS Batch)
     metadata_uri = os.environ.get("ECS_CONTAINER_METADATA_URI_V4") or os.environ.get("ECS_CONTAINER_METADATA_URI")
@@ -51,13 +55,26 @@ def _get_region_from_metadata():
 
 def get_client(name, region=None, default_region="us-east-1"):
     """
-    Robust boto3 client factory.
-    Tries to determine the AWS region in this order:
+    Creates a robust boto3 client, determining the AWS region in the following order:
         1. Explicit argument
-        2. AWS_REGION / AWS_DEFAULT_REGION env vars
+        2. AWS_REGION / AWS_DEFAULT_REGION environment variables
         3. boto3/botocore session
         4. ECS/EC2 metadata
         5. Fallback default region (us-east-1)
+
+    Parameters
+    ----------
+    name : str
+        The name of the AWS service client.
+    region : Optional[str], default=None
+        The AWS region to use.
+    default_region : str, default="us-east-1"
+        The fallback AWS region.
+
+    Returns
+    -------
+    boto3.client
+        A boto3 client for the specified service.
     """
     # Step 1–3: Try common boto3 config methods
     region = (
