@@ -1,6 +1,8 @@
 """Tests for the Runner classes and implementations."""
 
 import os
+import subprocess
+from shutil import which
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +13,7 @@ from dml_util.runners import (
     DockerRunner,
     HatchRunner,
     ScriptRunner,
+    UvRunner,
     WrappedRunner,
 )
 
@@ -198,11 +201,9 @@ class TestCondaRunner:
                         "data": {"param": "value"},
                     },
                 )
-
                 # Verify WrappedRunner.funkify was called with a script and sub
                 args, kwargs = mock_funkify.call_args
                 script, sub = args
-
                 assert "source /usr/local/conda/etc/profile.d/conda.sh" in script
                 assert "conda activate test-env" in script
                 assert sub == {
@@ -210,6 +211,17 @@ class TestCondaRunner:
                     "uri": "test-uri",
                     "data": {"param": "value"},
                 }
+
+
+@pytest.mark.skipif(not which("uv"), reason="uv command not found")
+def test_uvrunner_cli(tmp_path):
+    subprocess.run(["uv", "init", "--bare"], check=True, cwd=tmp_path)
+    script_path = tmp_path / "script.sh"
+    script_path.write_text(UvRunner.funkify(None, str(tmp_path))["script"])
+    subprocess.run(["chmod", "+x", str(script_path)], check=True)
+    pycmd = "import sys; print(sys.executable)"
+    resp = subprocess.run([str(script_path), "python", "-c", pycmd], check=True, capture_output=True, text=True)
+    assert resp.stdout.strip().startswith(str(tmp_path))  # we're using the right python
 
 
 class TestDockerRunner:

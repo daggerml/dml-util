@@ -84,7 +84,10 @@ class ScriptRunner(RunnerBase):
 
 
 class WrappedRunner(RunnerBase):
-    """Runs a script that wraps another runner."""
+    """Runs a script that wraps another runner.
+
+    Note: This runner does not keep state or handle job locks -- it's expecting the sub-runner to handle that.
+    """
 
     @classmethod
     def funkify(cls, script, sub):
@@ -92,6 +95,7 @@ class WrappedRunner(RunnerBase):
         return kw
 
     def run(self):
+        """Overrides the RunnerBase.run method with a simple pass-through to the script."""
         sub_adapter, sub_uri, sub_kwargs = self.input.get_sub()
         with TemporaryDirectory() as tmpd:
             with open(f"{tmpd}/script", "w") as f:
@@ -153,6 +157,42 @@ class HatchRunner(WrappedRunner):
                 echo "DONE with input data" >&2
             fi
             echo "$INPUT_DATA" | {shlex.quote(hatch_path)}/hatch -e {name} run "$@"
+            """
+        ).strip()
+        return WrappedRunner.funkify(script, sub)
+
+
+class UvRunner(WrappedRunner):
+    """Runs a script in a UV environment."""
+
+    @classmethod
+    def funkify(cls, sub, path=None):
+        """
+        Creates a script for running commands in a UV environment.
+
+        This method is intended to be used in `dml_util.funkify`.
+
+        Parameters
+        ----------
+        sub : str
+            The sub data (adapter, uri, data) to be executed in the UV environment.
+        path : str, optional
+            The directory path to change into before executing the command.
+            If None, no directory change is performed.
+
+        Returns
+        -------
+        dict
+            A dictionary that `dml_util.funkify` can use to create a dml executable Resource.
+        """
+        cd_str = "" if path is None else f"cd {shlex.quote(path)}"
+        script = dedent(
+            f"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            {cd_str}
+            uv run "$@"
             """
         ).strip()
         return WrappedRunner.funkify(script, sub)
