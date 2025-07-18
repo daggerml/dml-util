@@ -32,7 +32,7 @@ def main():
             if os.path.isdir(f"{here}/{x}") and x != "__pycache__":
                 print(x)
         sys.exit(0)
-    version = '-'.join(__version_tuple__[:3])  # drop .dev0 and .post0, etc.
+    version = '-'.join(map(str, __version_tuple__[:3]))  # drop .dev0 and .post0, etc.
     assert args.name is not None, "name is required unless --list is set"
     with Dml().new(args.name, f"creating {args.name} cfn stack") as dag:
         if args.filepath is None:
