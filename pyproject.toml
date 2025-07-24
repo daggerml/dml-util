@@ -142,6 +142,9 @@ ban-relative-imports = "all"
 "tests/**/*" = ["PLR2004", "S101", "TID252"]
 "examples/**/*" = ["I001"]
 
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.pyright]
 include = ["src"]
 defineConstant = { DEBUG = true }

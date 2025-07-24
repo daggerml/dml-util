@@ -24,7 +24,7 @@ def zipit(directory_path, output_zip):
 
 def zip_up(s3, filepath):
     with TemporaryDirectory() as tmpd:
-        os.system(f"cp {filepath} {tmpd}")
+        os.system(f"cp {filepath} {tmpd}/index.py")
         if LOCAL_TEST:
             root = _here_.parent.parent.parent.parent
             os.system(f"pip install {root} -t {tmpd}")
@@ -33,16 +33,15 @@ def zip_up(s3, filepath):
         with NamedTemporaryFile(suffix=".zip") as tmpf:
             zipit(tmpd, tmpf.name)
             tmpf.flush()
-            return s3.put(filepath=tmpf.name, suffix=".zip")
+            obj = s3.put(filepath=tmpf.name, suffix=".zip")
+    print(f"Uploaded zip to {obj.uri}")
+    return dict(zip(["S3Bucket", "S3Key"], s3.parse_uri(obj.uri)))
 
 
 def load():
     s3 = S3Store()
     with open(_here_ / "cf.json") as f:
         js = json.load(f)
-    zipfile = zip_up(s3, _here_ / "impl.py")
-    print(f"zipfile: {zipfile.uri}")
-    code_data = dict(zip(["S3Bucket", "S3Key"], s3.parse_uri(zipfile.uri)))
-    js["Resources"]["Fn"]["Properties"]["Code"] = code_data
+    js["Resources"]["Fn"]["Properties"]["Code"] = zip_up(s3, _here_ / "impl.py")  # code_data
     params = {"Bucket": s3.bucket, "Prefix": "opt/dml/exec/batch"}
     return js, params, "LambdaFunctionArn", "dml-util-lambda-adapter"

@@ -6,6 +6,7 @@ Environment variables:
 - GPU_QUEUE: The name of the GPU job queue.
 - BATCH_TASK_ROLE_ARN: The ARN of the IAM role for Batch tasks.
 """
+
 import logging
 import os
 from typing import TYPE_CHECKING, Optional
@@ -20,7 +21,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-DFLT_PROP = {"vcpus": 1, "memory": 512}
 PENDING_STATES = ["SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"]
 SUCCESS_STATE = "SUCCEEDED"
 FAILED_STATE = "FAILED"
@@ -36,14 +36,13 @@ class BatchRunner(LambdaRunner):
             self._client = get_client("batch")
         return self._client
 
-    def submit(self):
-        sub_adapter, sub_uri, sub_kwargs = self.input.get_sub()
+    def proc_kw(self):
         kw = self.input.kwargs.copy()
-        kw.pop("sub")
-        image = kw.pop("image")["uri"]
-        container_props = DFLT_PROP
-        container_props.update(kw)
-        needs_gpu = any(x["type"] == "GPU" for x in container_props.get("resourceRequirements", []))
+        return kw["spec"], kw["image"]["uri"]
+
+    def register(self):
+        sub_adapter, sub_uri, sub_kwargs = self.input.get_sub()
+        _, image = self.proc_kw()
         logger.info("createing job definition with name: %r", f"fn-{self.input.cache_key}")
         response = self.client.register_job_definition(
             jobDefinitionName=f"fn-{self.input.cache_key}",
@@ -66,19 +65,35 @@ class BatchRunner(LambdaRunner):
                     *[{"name": k, "value": v} for k, v in self.config.to_envvars().items()],
                 ],
                 "jobRoleArn": os.environ["BATCH_TASK_ROLE_ARN"],
-                **container_props,
             },
         )
         job_def = response["jobDefinitionArn"]
         logger.info("created job definition with arn: %r", job_def)
+        return job_def
+
+    def submit(self, job_def):
+        kw, _ = self.proc_kw()
+        needs_gpu = any(x["type"] == "GPU" for x in kw.get("resourceRequirements", []))
+        job_queue = os.environ["GPU_QUEUE" if needs_gpu else "CPU_QUEUE"]
+        logger.info("job queue: %r", job_queue)
         response = self.client.submit_job(
             jobName=f"fn-{self.input.cache_key}",
-            jobQueue=os.environ["GPU_QUEUE" if needs_gpu else "CPU_QUEUE"],
+            jobQueue=job_queue,
             jobDefinition=job_def,
+            retryStrategy={
+                "attempts": 3,
+                "evaluateOnExit": [
+                    # {"onExitCode": "137", "action": "EXIT"},  # OOM
+                    {"onReason": "Host EC2*", "action": "RETRY"},
+                    {"onStatusReason": "ResourceInitialization*", "action": "RETRY"},
+                    {"onReason": "*", "action": "EXIT"},
+                ],
+            },
+            containerOverrides=kw,
         )
         logger.info("Job submitted: %r", response["jobId"])
         job_id = response["jobId"]
-        return {"job_def": job_def, "job_id": job_id}
+        return job_id
 
     def describe_job(self, state):
         job_id = state["job_id"]
@@ -98,8 +113,9 @@ class BatchRunner(LambdaRunner):
 
     def update(self, state):
         if state == {}:
-            state = self.submit()
-            job_id = state["job_id"]
+            job_def = self.register()
+            job_id = self.submit(job_def)
+            state = {"job_def": job_def, "job_id": job_id}
             return state, f"{job_id = } submitted", {}
         job_id, status = self.describe_job(state)
         msg = f"{job_id = } {status}"
