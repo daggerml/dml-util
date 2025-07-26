@@ -7,6 +7,7 @@ import os
 from glob import glob
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import NamedTuple
 from unittest import TestCase
 
 import boto3
@@ -21,6 +22,15 @@ S3_PREFIX = "foopy/barple"
 _root_ = Path(__file__).parent.parent
 
 
+class CliArgs(NamedTuple):
+    uri: str
+    input: str
+    output: str
+    error: str
+    n_iters: int = 1
+    debug: bool = False
+
+
 def tmpdir():
     return TemporaryDirectory(prefix="dml-util-test-")
 
@@ -31,14 +41,6 @@ def rel_to(x, rel):
 
 def ls_r(path):
     return [rel_to(x, path) for x in glob(f"{path}/**", recursive=True)]
-
-
-class Config:
-    def __init__(self, **kwargs):
-        self.__dict__.update(**kwargs)
-
-    def __getattr__(self, item):
-        return self.__dict__.get(item, None)
 
 
 class AwsTestCase(TestCase):

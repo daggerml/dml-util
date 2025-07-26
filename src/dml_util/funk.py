@@ -4,12 +4,16 @@ from contextlib import contextmanager
 from functools import partial
 from inspect import getsource
 from textwrap import dedent
+from typing import TYPE_CHECKING, Any, Callable, Sequence, Union, overload
 from urllib.parse import urlparse
 
 import boto3
 from daggerml import Dml, Resource
 
 from dml_util.adapters import AdapterBase
+
+if TYPE_CHECKING:
+    import daggerml.core
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +49,46 @@ def _fnk(fn, extra_fns, extra_lines):
     return src
 
 
+@overload
 def funkify(
-    fn=None,
-    uri="script",
-    data=None,
-    adapter="local",
-    extra_fns=(),
-    extra_lines=(),
-):
+    fn: None = None,
+    *,
+    uri: str = "script",
+    data: Any = None,
+    adapter: Union[Resource, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+) -> Callable[[Callable[["daggerml.core.Dag"], Any]], Resource]: ...
+
+
+@overload
+def funkify(
+    fn: Resource,
+    uri: str = "script",
+    data: Any = None,
+    adapter: Union[Resource, str] = "local",
+) -> Resource: ...
+
+
+@overload
+def funkify(
+    fn: Union[Callable[["daggerml.core.Dag"], Any], str],
+    uri: str = "script",
+    data: Any = None,
+    adapter: Union[Resource, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+) -> Resource: ...
+
+
+def funkify(
+    fn: Union[None, Callable[["daggerml.core.Dag"], Any], Resource, str] = None,
+    uri: str = "script",
+    data: Any = None,
+    adapter: Union[Resource, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+) -> Union[Resource, Callable[[Callable[["daggerml.core.Dag"], Any]], Resource]]:
     """
     Decorator to funkify a function into a DML Resource.
 

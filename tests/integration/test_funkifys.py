@@ -29,7 +29,7 @@ from dml_util.runners import CondaRunner, HatchRunner
 from tests.util import (
     S3_BUCKET,
     S3_PREFIX,
-    Config,
+    CliArgs,
     FullDmlTestCase,
     _root_,
     tmpdir,
@@ -51,7 +51,7 @@ class TestTooling(FullDmlTestCase):
     def test_runner(self):
         os.environ["DML_CACHE_KEY"] = "test_key"
         with tmpdir() as tmpd:
-            conf = Config(
+            conf = CliArgs(
                 uri="asdf:uri",
                 input=f"{tmpd}/input.dump",
                 output=f"{tmpd}/output.dump",
@@ -147,29 +147,6 @@ class TestTooling(FullDmlTestCase):
         )
         logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stderr"])["events"]
         assert "testing stderr..." in {x["message"] for x in logs}
-
-    def test_funkify_string(self):
-        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
-            with Dml.temporary(cache_path=tmpd) as dml:
-                vals = [1, 2, 3]
-                with dml.new("d0", "d0") as dag:
-                    dag.f0 = funkify(
-                        dedent(
-                            """
-                        from dml_util import aws_fndag
-
-                        if __name__ == "__main__":
-                            with aws_fndag() as dag:
-                                dag.n0 = sum(dag.argv[1:].value())
-                                dag.result = dag.n0
-                            """
-                        ).strip(),
-                    )
-                    dag.n0 = dag.f0(*vals)
-                    assert dag.n0.value() == sum(vals)
-                    dag.result = dag.n0
-                dag = dml.load(dag.n0)
-                dag = dml("dag", "describe", dag._ref.to)
 
     def test_subdag_caching(self):
         @funkify

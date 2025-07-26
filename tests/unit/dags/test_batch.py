@@ -6,7 +6,10 @@ import pytest
 
 from dml_util.aws import get_client
 from dml_util.core.config import EnvConfig, InputConfig
+from dml_util.core.daggerml import Error
 from dml_util.runners.batch import FAILED_STATE, PENDING_STATES, SUCCESS_STATE, BatchRunner
+
+MEM_MAX = 151
 
 
 @pytest.fixture(autouse=True)
@@ -24,9 +27,9 @@ def batch_runner():
             cache_path="/dev/null",
             cache_key="test-key",
             kwargs={
-                "spec": {"resourceRequirements": [{"type": "MEMORY", "value": 1024}]},
+                "spec": {"resourceRequirements": [{"type": "MEMORY", "value": 100}]},
                 "image": {"uri": "test-image"},
-                "memory_max": 2048,
+                "memory_max": MEM_MAX,
                 "sub": {
                     "adapter": "adapter",
                     "uri": "uri",
@@ -56,6 +59,10 @@ def test_update_no_state(batch_runner):
     assert "submitted" in msg
     batch_runner._client.register_job_definition.assert_called_once()
     batch_runner._client.submit_job.assert_called_once()
+    _, kw = batch_runner._client.submit_job.call_args
+    assert kw["jobDefinition"] == job_def
+    # job queue is cpu-q
+    assert kw["jobQueue"] == "cpu-q"
 
 
 @pytest.mark.parametrize("status", PENDING_STATES)
@@ -74,33 +81,35 @@ def test_update_pending_states(batch_runner, status):
     assert not batch_runner._client.submit_job.called
 
 
-@pytest.mark.parametrize("is_success,has_err,has_out", product([True, False], repeat=3))
-def test_update_finished(batch_runner, is_success, has_err, has_out):
+@pytest.mark.parametrize("exit_code,has_err,has_out", product([0, 1, 53], [True, False], [True, False]))
+def test_update_finished(batch_runner, exit_code, has_err, has_out):
     # mock the s3store (batch_runner.s3) "exists" function with another that returns True iff has_[x]
     state = {"job_id": "foo", "job_def": "bar"}
 
     def s3_exists(name):
         return (has_err and name == "error.dump") or (has_out and name == "output.dump")
 
+    desc = {
+        "jobId": state["job_id"],
+        "status": SUCCESS_STATE if exit_code == 0 else FAILED_STATE,
+        "attempts": [{"container": {"exitCode": exit_code, "memory": "100"}}],
+    }
     batch_runner.s3.exists = s3_exists
     batch_runner.s3.get.return_value = b"testing"
-    batch_runner._client.describe_jobs.return_value = {
-        "jobs": [{"jobId": state["job_id"], "status": SUCCESS_STATE if is_success else FAILED_STATE}]
-    }
-    if is_success and has_out:
-        new_state, msg, dump = batch_runner.update(state)
+    batch_runner._client.describe_jobs.return_value = {"jobs": [desc]}
+    if exit_code == 0 and has_out:
+        new_state, msg, dump = batch_runner.update(state.copy())
         assert new_state is None
         assert SUCCESS_STATE in msg
         assert dump
     else:
-        with pytest.raises(RuntimeError) as excinfo:
-            batch_runner.update(state)
-        if is_success:
-            assert "no output found" in str(excinfo.value)
-        if has_err:
-            assert "testing" in str(excinfo.value)
+        with pytest.raises(Error) as excinfo:
+            batch_runner.update(state.copy())
+        if exit_code == 0:
+            assert "no output" in str(excinfo.value)
+        assert excinfo.value.context["exitCode"] == exit_code
+        assert not batch_runner._client.submit_job.called
     assert not batch_runner._client.register_job_definition.called
-    assert not batch_runner._client.submit_job.called
 
 
 def test_gc(batch_runner):

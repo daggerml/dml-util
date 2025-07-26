@@ -5,13 +5,14 @@ Adapters are used to connect DaggerML to various execution environments,
 such as AWS Lambda or local runners.
 """
 
+import json
 import logging
 import logging.config
 import re
 import sys
 import time
 from argparse import ArgumentParser
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from urllib.parse import urlparse
 
 from dml_util.aws import get_client
@@ -72,11 +73,7 @@ class VerboseArgumentParser(ArgumentParser):
     def error(self, message):
         # Customize this however you want
         self.print_usage(sys.stderr)
-        self.exit(
-            2,
-            f"\nError: {message}\n\n"
-            f"Hint: Run with '--help' to see usage and examples.\n"
-        )
+        self.exit(2, f"\nError: {message}\n\nHint: Run with '--help' to see usage and examples.\n")
 
 
 @dataclass
@@ -217,7 +214,7 @@ class AdapterBase:
         except Exception as e:
             logger.exception("Error in adapter")
             try:
-                _write_data(str(Error(e)), args.error)
+                _write_data(json.dumps(asdict(Error(e))), args.error)
             except Exception:
                 logger.exception("cannot write to %r", args.error)
             return 1
