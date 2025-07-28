@@ -6,11 +6,11 @@ from tempfile import NamedTemporaryFile
 from unittest.mock import MagicMock, patch
 
 import pytest
+from daggerml import Error, Resource
 
 from dml_util.adapters import LambdaAdapter, LocalAdapter
 from dml_util.adapters.base import AdapterBase, _read_data, _write_data
-from dml_util.core.daggerml import Error, Resource
-from dml_util.runners.base import RunnerBase
+from dml_util.runners.base import runners
 from tests.util import tmpdir
 
 
@@ -168,53 +168,36 @@ class TestLocalAdapter:
     def test_funkify_simple(self):
         """Test funkify with simple data."""
         uri = "test-uri"
-        original_runners = RunnerBase._RUNNERS.copy()
-        try:
-            mock_runner = MagicMock()
-            mock_runner.funkify.return_value = {"processed": "data"}
-            RunnerBase._RUNNERS[uri] = mock_runner
-
-            with patch.object(LocalAdapter, "resolve", return_value=mock_runner):
-                result = LocalAdapter.funkify(uri, {"param": "value"})
-
+        mock_runner = MagicMock()
+        mock_runner.funkify.return_value = {"processed": "data"}
+        with patch.dict(runners, {uri: mock_runner}):
+            result = LocalAdapter.funkify(uri, {"param": "value"})
             mock_runner.funkify.assert_called_once_with(param="value")
             assert isinstance(result, Resource)
             assert result.data == {"processed": "data"}
             assert result.adapter == LocalAdapter.ADAPTER
-        finally:
-            RunnerBase._RUNNERS = original_runners
 
     def test_funkify_tuple(self):
         """Test funkify when runner returns a tuple."""
         uri = "test-uri"
-        original_runners = RunnerBase._RUNNERS.copy()
-        try:
-            mock_runner = MagicMock()
-            mock_runner.funkify.return_value = ("new-uri", {"processed": "data"})
-            RunnerBase._RUNNERS[uri] = mock_runner
-
+        mock_runner = MagicMock()
+        mock_runner.funkify.return_value = ("new-uri", {"processed": "data"})
+        with patch.dict(runners, {uri: mock_runner}):
             result = LocalAdapter.funkify(uri, {"param": "value"})
-
             mock_runner.funkify.assert_called_once_with(param="value")
             assert isinstance(result, Resource)
             assert result.uri == "new-uri"
             assert result.data == {"processed": "data"}
             assert result.adapter == LocalAdapter.ADAPTER
-        finally:
-            RunnerBase._RUNNERS = original_runners
 
     def test_send_to_remote(self, test_config):
         """Test send_to_remote method."""
         uri = "test-runner"
-        original_runners = RunnerBase._RUNNERS.copy()
-
-        try:
-            mock_runner = MagicMock()
-            mock_instance = MagicMock()
-            mock_runner.return_value = mock_instance
-            mock_instance.run.return_value = ("test response", "test log message")
-            RunnerBase._RUNNERS[uri] = mock_runner
-
+        mock_runner = MagicMock()
+        mock_instance = MagicMock()
+        mock_runner.return_value = mock_instance
+        mock_instance.run.return_value = ("test response", "test log message")
+        with patch.dict(runners, {uri: mock_runner}):
             test_data = {
                 "cache_path": "/tmp",
                 "cache_key": "test",
@@ -222,17 +205,12 @@ class TestLocalAdapter:
                 "dump": "{}",
             }
             dump = json.dumps(test_data)
-
             result, message = LocalAdapter.send_to_remote(uri, test_config, dump)
-
             # Verify runner was instantiated correctly
             mock_runner.assert_called_once()
-
             # Check return values
             assert result == "test response"
             assert message == "test log message"
-        finally:
-            RunnerBase._RUNNERS = original_runners
 
 
 class TestLambdaAdapter:
@@ -299,9 +277,8 @@ class TestLambdaAdapter:
             LambdaAdapter.send_to_remote(uri, test_config, dump)
 
         # Check error message contains Lambda error details
-        error_msg = str(excinfo.value)
-        assert "Lambda error message" in error_msg
-        assert "status: 400" in error_msg
+        assert isinstance(excinfo.value, Error)
+        assert excinfo.value.origin == "lambda"
 
 
 class TestCLIInterface:

@@ -5,20 +5,22 @@ Adapters are used to connect DaggerML to various execution environments,
 such as AWS Lambda or local runners.
 """
 
-import json
 import logging
 import logging.config
 import re
 import sys
 import time
 from argparse import ArgumentParser
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from typing import Union
 from urllib.parse import urlparse
+
+from daggerml import Error, Resource
+from daggerml.core import to_json
 
 from dml_util.aws import get_client
 from dml_util.aws.s3 import S3Store
 from dml_util.core.config import EnvConfig
-from dml_util.core.daggerml import Error, Resource
 
 logger = logging.getLogger(__name__)
 
@@ -214,9 +216,9 @@ class AdapterBase:
         except Exception as e:
             logger.exception("Error in adapter")
             try:
-                _write_data(json.dumps(asdict(Error(e))), args.error)
+                _write_data(to_json(Error.from_ex(e)), args.output)
             except Exception:
-                logger.exception("cannot write to %r", args.error)
+                logger.exception("cannot write to %r", args.output)
             return 1
         finally:
             cls._teardown()
@@ -226,7 +228,7 @@ class AdapterBase:
         return Resource(uri, data=data, adapter=cls.ADAPTER)
 
     @classmethod
-    def send_to_remote(cls, uri, config: EnvConfig, dump: str) -> tuple[str, str]:
+    def send_to_remote(cls, uri, config: EnvConfig, dump: str) -> tuple[Union[str, None], str]:
         """Send data to a remote service specified by the URI.
 
         Parameters
@@ -244,5 +246,9 @@ class AdapterBase:
             A tuple containing the response data and a message. If the response is truthy,
             we pass it on to the caller via --output flag.
             The message is written to the --error flag.
+
+        Notes
+        -----
+        * Any errors raised here will be caught by the CLI and written as the output.
         """
         raise NotImplementedError("send_to_remote not implemented for this adapter")

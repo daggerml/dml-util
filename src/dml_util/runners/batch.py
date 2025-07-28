@@ -12,16 +12,15 @@ import os
 from typing import TYPE_CHECKING, Optional
 
 from botocore.exceptions import ClientError
+from daggerml import Error
 
 from dml_util.aws import get_client
-from dml_util.core.daggerml import Error
 from dml_util.runners.lambda_ import LambdaRunner
 
 if TYPE_CHECKING:
     import boto3
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 PENDING_STATES = ["SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"]
 SUCCESS_STATE = "SUCCEEDED"
 FAILED_STATE = "FAILED"
@@ -122,7 +121,7 @@ class BatchRunner(LambdaRunner):
 
     def get_error_info(self):
         last_attempt = self.job_desc.get("attempts", [{}])[-1].get("container", {})
-        return {k: last_attempt.get(k, None) for k in ["exitCode", "reason", "logStreamName"]}
+        return last_attempt.get("exitCode", 1), last_attempt.get("reason", "Unknown error")
 
     def update(self, state):
         if state == {}:
@@ -141,13 +140,15 @@ class BatchRunner(LambdaRunner):
             js = self.s3.get("output.dump").decode()
             logger.info("dump = %r", js)
             return None, msg, js
-        error_info = self.get_error_info()
-        error_code = "no output" if status == SUCCESS_STATE else self.job_desc.get("statusReason", "Unknown")
+        if status == SUCCESS_STATE:
+            exit_code, exit_reason = 0, "Job completed successfully but no output was written."
+        else:
+            exit_code, exit_reason = self.get_error_info()
         if self.s3.exists("error.dump"):
             logger.info("error file found with content: %r", self.s3.get("error.dump").decode())
         if self.s3.exists("output.dump"):
             logger.info("output file found with content: %r", self.s3.get("output.dump").decode())
-        raise Error(error_code, context=error_info, code=error_info["exitCode"])
+        raise Error(exit_reason, origin="aws-batch", type=f"exit:{exit_code}")
 
     def gc(self, state):
         super().gc(state)

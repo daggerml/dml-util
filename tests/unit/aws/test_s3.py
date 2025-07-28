@@ -1,13 +1,12 @@
 """Unit tests for the S3Store module."""
 
-from unittest import skipUnless
 from unittest.mock import Mock, patch
 
 import pytest
 from botocore.exceptions import ClientError
+from daggerml import Node, Resource
 
 from dml_util.aws.s3 import S3Store
-from dml_util.core.daggerml import Node, Resource, has_daggerml
 from tests.util import S3_BUCKET, S3_PREFIX, _root_, ls_r, tmpdir
 
 
@@ -201,19 +200,20 @@ class TestS3Store:
         assert s3.ls(f"s3://{s3.bucket}/{s3.prefix}/b", recursive=True) == s3.ls("b", recursive=True)
         assert s3.ls("b/", recursive=True) == s3.ls("b", recursive=True)
         assert s3.ls("b", recursive=True) == [s3._name2uri(x) for x in ["b/c", "b/d", "b/d/e"]]
-        s3.rm(keys)
+        s3.rm(*keys)
         assert s3.ls(recursive=True) == []
 
-    @skipUnless(has_daggerml, "Dml not available")
     @pytest.mark.usefixtures("s3_bucket")
     def test_tar(self):
         from daggerml import Dml
 
         context = _root_ / "tests/assets/dkr-context"
         s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
-        assert s3.bucket == S3_BUCKET
-        assert s3.prefix.startswith(S3_PREFIX)
         with Dml.temporary() as dml:
+            try:
+                dml("status")
+            except Exception:
+                pytest.skip("Dml not available, skipping S3 tar test")
             s3_tar = s3.tar(dml, context)
             with tmpdir() as tmpd:
                 s3.untar(s3_tar, tmpd)

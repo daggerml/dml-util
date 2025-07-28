@@ -3,10 +3,10 @@ from itertools import product
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+from daggerml import Error
 
 from dml_util.aws import get_client
 from dml_util.core.config import EnvConfig, InputConfig
-from dml_util.core.daggerml import Error
 from dml_util.runners.batch import FAILED_STATE, PENDING_STATES, SUCCESS_STATE, BatchRunner
 
 MEM_MAX = 151
@@ -107,7 +107,8 @@ def test_update_finished(batch_runner, exit_code, has_err, has_out):
             batch_runner.update(state.copy())
         if exit_code == 0:
             assert "no output" in str(excinfo.value)
-        assert excinfo.value.context["exitCode"] == exit_code
+        assert excinfo.value.type == f"exit:{exit_code}"
+        assert excinfo.value.origin == "aws-batch"
         assert not batch_runner._client.submit_job.called
     assert not batch_runner._client.register_job_definition.called
 

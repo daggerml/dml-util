@@ -13,9 +13,9 @@ from typing import Union
 from urllib.parse import urlparse
 
 import boto3
+from daggerml import Node, Resource
 
 from dml_util.aws import get_client
-from dml_util.core.daggerml import Node, Resource
 from dml_util.core.utils import batched, compute_hash, exactly_one, js_dump
 
 logger = logging.getLogger(__name__)

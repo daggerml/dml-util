@@ -1,10 +1,11 @@
 import logging
 import os
+import re
 from contextlib import contextmanager
 from functools import partial
 from inspect import getsource
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Sequence, Union, overload
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union, overload
 from urllib.parse import urlparse
 
 import boto3
@@ -46,6 +47,7 @@ def _fnk(fn, extra_fns, extra_lines):
         fn_name=fn.__name__,
         eln="\n".join(extra_lines),
     )
+    src = re.sub(r"\n{3,}", "\n\n", src)
     return src
 
 
@@ -54,7 +56,7 @@ def funkify(
     fn: None = None,
     *,
     uri: str = "script",
-    data: Any = None,
+    data: Optional[dict] = None,
     adapter: Union[Resource, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
@@ -65,7 +67,7 @@ def funkify(
 def funkify(
     fn: Resource,
     uri: str = "script",
-    data: Any = None,
+    data: Optional[dict] = None,
     adapter: Union[Resource, str] = "local",
 ) -> Resource: ...
 
@@ -74,7 +76,7 @@ def funkify(
 def funkify(
     fn: Union[Callable[["daggerml.core.Dag"], Any], str],
     uri: str = "script",
-    data: Any = None,
+    data: Optional[dict] = None,
     adapter: Union[Resource, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
@@ -84,7 +86,7 @@ def funkify(
 def funkify(
     fn: Union[None, Callable[["daggerml.core.Dag"], Any], Resource, str] = None,
     uri: str = "script",
-    data: Any = None,
+    data: Optional[dict] = None,
     adapter: Union[Resource, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
@@ -142,6 +144,7 @@ def funkify(
             extra_lines=extra_lines,
         )
     if isinstance(adapter, Resource):
+        assert isinstance(fn, Resource), "Adapter must be a Resource if fn is a Resource"
         return Resource(adapter.uri, data={"sub": fn, **(data or {})}, adapter=adapter.adapter)
     adapter_ = AdapterBase.ADAPTERS.get(adapter)
     if adapter_ is None:

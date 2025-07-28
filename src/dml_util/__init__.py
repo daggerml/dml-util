@@ -15,7 +15,6 @@ import dml_util.runners
 # Import adapters
 from dml_util.aws import get_client
 from dml_util.aws.s3 import S3Store
-from dml_util.core.daggerml import has_daggerml
 from dml_util.core.utils import dict_product, tree_map
 
 try:

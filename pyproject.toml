@@ -27,12 +27,12 @@ classifiers = [
 ]
 dependencies = [
   "boto3",
+  "daggerml>=0.0.34",
 ]
 
 [project.optional-dependencies]
 dml = [
-  "daggerml==0.0.35",
-  "daggerml-cli==0.0.34",
+  "daggerml-cli>=0.0.34",
   "watchtower",
 ]
 nb = [
@@ -56,7 +56,7 @@ Issues = "https://github.com/daggerml/dml-util/issues"
 Source = "https://github.com/daggerml/dml-util"
 
 [tool.pytest.ini_options]
-pythonpath = "tests/"
+# pythonpath = "tests/"
 minversion = "6.0"
 addopts = "-ra --ignore=submodules/"
 testpaths = [
@@ -85,20 +85,16 @@ artifacts = [
 [tool.hatch.envs.default]
 python="3.10"
 features = ["test", "nb"]
-dependencies = ["twine"]
-pre-install-commands = [
+post-install-commands = [
+  "pip uninstall -y daggerml",  # remove pypi version if installed
   "pip install -e {root:uri}/submodules/python-lib",
-  "pip install -e {root:uri}/submodules/python-lib/submodules/daggerml_cli",
+  "pip install -e {root:uri}/submodules/daggerml-cli",
 ]
-[tool.hatch.envs.default.scripts]
-test = 'pytest {args}'
-dml-build = "hatch build && twine upload -r {args:testpypi} dist/*"
-[tool.hatch.envs.default.env-vars]
-PYTHONDONTWRITEBYTECODE = "1"
 
 [tool.hatch.envs.pandas]
 template = "default"
 dependencies = ["pandas==2.2.3"]
+
 [tool.hatch.envs.polars]
 template = "default"
 dependencies = ["polars==1.2"]
@@ -111,8 +107,11 @@ python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 [tool.hatch.envs.no-dml]
 python="3.10"
 features = ["test"]
-dependencies = []
-pre-install-commands = []
+post-install-commands = [
+  "pip uninstall -y daggerml",  # remove pypi version if installed
+  "pip install -e {root:uri}/submodules/python-lib",
+  # NO DML CLI, so no need to install it
+]
 [tool.hatch.envs.no-dml.env-vars]
 PYTHONDONTWRITEBYTECODE = "1"
 AWS_ACCESS_KEY_ID  = "doesnotexist"

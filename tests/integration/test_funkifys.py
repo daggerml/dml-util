@@ -17,12 +17,12 @@ from unittest.mock import patch
 
 import boto3
 import pytest
+from daggerml import Dml, Error, Resource
 
 import dml_util.adapters as adapter
 import dml_util.wrapper  # noqa: F401
 from dml_util import funk
 from dml_util.aws.s3 import S3Store
-from dml_util.core.daggerml import Dml, Error, Resource
 from dml_util.funk import funkify
 from dml_util.lib.dkr import Ecr
 from dml_util.runners import CondaRunner, HatchRunner
