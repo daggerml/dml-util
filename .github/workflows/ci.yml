@@ -87,7 +87,7 @@ jobs:
           path: .coverage
           include-hidden-files: true
   summary: # a single task that only passes if all tests and linting pass
-    needs: [test, lint, test-no-dml]
+    needs: [test, lint, test-no-cli]
     runs-on: ubuntu-latest
     steps:
       - name: Do nothing
