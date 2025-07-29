@@ -49,10 +49,12 @@ jobs:
           path: .coverage
           include-hidden-files: true
   test-fast:
-    if:
-      not ((github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+    if: >-
+      ${{ not (
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
       (github.event_name == 'pull_request' && github.base_ref == 'master') ||
-      startsWith(github.ref, 'refs/tags/v'))
+      startsWith(github.ref, 'refs/tags/v')
+      ) }}
     strategy:
       matrix:
         py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
