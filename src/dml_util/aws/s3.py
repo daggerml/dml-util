@@ -9,7 +9,7 @@ from io import BytesIO
 from itertools import groupby
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Union
+from typing import Sequence, Union, overload
 from urllib.parse import urlparse
 
 import boto3
@@ -98,6 +98,7 @@ class S3Store:
             name_or_uri = name_or_uri.value()
         if isinstance(name_or_uri, Resource):
             name_or_uri = name_or_uri.uri
+        assert isinstance(name_or_uri, str), "name_or_uri must be a string or Resource"
         p = urlparse(name_or_uri)
         if p.scheme == "s3":
             return p.netloc, p.path[1:]
@@ -203,12 +204,28 @@ class S3Store:
             self.client.download_file(p.netloc, p.path[1:], tmpf.name)
             subprocess.run(["tar", "-xvf", tmpf.name, "-C", dest], check=True)
 
-    def rm(self, *name_or_uris: Union[str, Resource, list[Union[str, Resource]]]):
+    @overload
+    def rm(self, name_or_uri: Sequence[Union[str, Resource]]) -> None:
+        """Remove multiple objects from S3."""
+        ...
+
+    @overload
+    def rm(self, *name_or_uri: Union[str, Resource]) -> None:
+        """Remove a single object from S3."""
+        ...
+
+    def rm(
+        self,
+        name_or_uri: Union[str, Resource, Sequence[Union[str, Resource]]],
+        *name_or_uris: Union[str, Resource],
+    ) -> None:
         """Remove objects from S3."""
-        if len(name_or_uris) == 1 and isinstance(name_or_uris[0], (list, tuple)):
-            name_or_uris = name_or_uris[0]
-        if len(name_or_uris) == 0:
-            return
+        if isinstance(name_or_uri, (list, tuple)):
+            assert len(name_or_uris) == 0, "Cannot pass both a sequence and additional arguments"
+            name_or_uris = tuple(name_or_uri)
+        else:
+            assert isinstance(name_or_uri, (str, Resource)), "name_or_uri must be a string or Resource"
+            name_or_uris = tuple([name_or_uri, *name_or_uris])
         for bucket, objs in groupby(map(self.parse_uri, sorted(name_or_uris)), key=lambda x: x[0]):
             for batch in batched((x[1] for x in objs), 1000):
                 self.client.delete_objects(

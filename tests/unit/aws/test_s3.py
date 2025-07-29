@@ -1,5 +1,7 @@
 """Unit tests for the S3Store module."""
 
+from shutil import which
+from unittest import skipUnless
 from unittest.mock import Mock, patch
 
 import pytest
@@ -203,6 +205,7 @@ class TestS3Store:
         s3.rm(*keys)
         assert s3.ls(recursive=True) == []
 
+    @skipUnless(which("dml"), "Dml not available")
     @pytest.mark.usefixtures("s3_bucket")
     def test_tar(self):
         from daggerml import Dml
@@ -210,10 +213,6 @@ class TestS3Store:
         context = _root_ / "tests/assets/dkr-context"
         s3 = S3Store(bucket=S3_BUCKET, prefix=S3_PREFIX)
         with Dml.temporary() as dml:
-            try:
-                dml("status")
-            except Exception:
-                pytest.skip("Dml not available, skipping S3 tar test")
             s3_tar = s3.tar(dml, context)
             with tmpdir() as tmpd:
                 s3.untar(s3_tar, tmpd)
