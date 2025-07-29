@@ -30,9 +30,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install e ./submodules/python-lib/
           pip install .[test]
-          pip uninstall -y daggerml
-          pip install -e ./submodules/python-lib/
       - name: pytest
         run: pytest ./tests/unit/ --cov
       - name: list files
@@ -64,18 +63,16 @@ jobs:
           python-version: ${{ matrix.py }}
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pipx
-          python -m pip install .[nb,test]
-          python -m pip uninstall -y daggerml
-          python -m pip install ./submodules/*
+          pip install --upgrade pip
+          pip install -e ./submodules/*
+          pip install .[nb,test]
+          pip install pipx
           pipx install hatch
       - name: create conda env
         run: |
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
-          conda run -n dml-pandas pip install .[nb,test] ./submodules/*
-          conda run -n dml-pandas pip uninstall -y daggerml
-          conda run -n dml-pandas pip install ./submodules/*
+          conda run -n dml-pandas pip install -e ./submodules/*
+          conda run -n dml-pandas pip install .[nb,test]
       - name: pytest
         run: |
           pytest --cov
