@@ -48,6 +48,39 @@ jobs:
           name: coverage-no-dml
           path: .coverage
           include-hidden-files: true
+  test-fast:
+    if:
+      not ((github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'master') ||
+      startsWith(github.ref, 'refs/tags/v'))
+    strategy:
+      matrix:
+        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install --constraint <(printf "daggerml @ file://$PWD/submodules/python-lib\ndaggerml-cli @ file://$PWD/submodules/daggerml-cli") .[dev,dml,nb]
+      - name: pytest
+        run: |
+          pytest --cov -m "not slow"
+          pytest --doctest-modules src/
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.py }}
+          path: .coverage
+          include-hidden-files: true
   test:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
       (github.event_name == 'pull_request' && github.base_ref == 'master') ||
