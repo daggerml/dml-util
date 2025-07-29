@@ -32,8 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ./submodules/python-lib/
-          pip install .[test]
+          pip install --constraint <(printf "daggerml @ file://$PWD/submodules/python-lib") .[dev]
       - name: pytest
         run: pytest ./tests/unit/ --cov
       - name: list files
@@ -66,15 +65,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e ./submodules/*
-          pip install .[nb,test]
+          pip install --constraint <(printf "daggerml @ file://$PWD/submodules/python-lib\ndaggerml-cli @ file://$PWD/submodules/daggerml-cli") .[dev,dml,nb]
           pip install pipx
           pipx install hatch
       - name: create conda env
         run: |
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
-          conda run -n dml-pandas pip install -e ./submodules/*
-          conda run -n dml-pandas pip install .[nb,test]
+          conda run -n dml-pandas pip install --constraint <(printf "daggerml @ file://$PWD/submodules/python-lib\ndaggerml-cli @ file://$PWD/submodules/daggerml-cli") .[dev,dml]
       - name: pytest
         run: |
           pytest --cov
