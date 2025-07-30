@@ -2,16 +2,13 @@
 
 import logging
 import os
-import sys
-from io import StringIO
 from unittest.mock import patch
 
 import boto3
 import pytest
+from daggerml import Dml
 
-from dml_util.adapters import AdapterBase
-from dml_util.core.config import EnvConfig
-from tests.util import S3_BUCKET, S3_PREFIX, tmpdir
+from tests.util import S3_BUCKET, S3_PREFIX
 
 try:
     from watchtower import CloudWatchLogHandler
@@ -19,9 +16,6 @@ except ModuleNotFoundError:
     CloudWatchLogHandler = None
 
 # Constants for testing
-CACHE_PATH = "/tmp/cache"
-CACHE_KEY = "test_key"
-TEST_RUN_ID = "test-run-id"
 DYNAMO_TABLE = "test-dynamodb-table"
 
 
@@ -46,7 +40,7 @@ def _aws_server():
             "AWS_ENDPOINT_URL": moto_endpoint,
         }
         try:
-            yield {"server": server, "endpoint": moto_endpoint, "envvars": aws_env}
+            yield {"server": server, "endpoint": moto_endpoint, "envvars": aws_env, "port": moto_port}
         finally:
             if CloudWatchLogHandler:
                 # If watchtower is installed, we can safely remove the handler
@@ -59,6 +53,22 @@ def _aws_server():
 
 
 @pytest.fixture
+def logs(_aws_server):
+    """Create a mock CloudWatch Logs client for testing."""
+    logs = boto3.client("logs", endpoint_url=_aws_server["endpoint"])
+    logs.create_log_group(logGroupName="dml")
+    try:
+        yield logs
+    finally:
+        # list all log streams in the group and delete them
+        log_streams = logs.describe_log_streams(logGroupName="dml").get("logStreams", [])
+        for stream in log_streams:
+            logs.delete_log_stream(logGroupName="dml", logStreamName=stream["logStreamName"])
+        # delete the log group
+        logs.delete_log_group(logGroupName="dml")
+
+
+@pytest.fixture(autouse=True)
 def clear_envvars():
     with patch.dict(os.environ):
         # Clear AWS environment variables before any tests run
@@ -66,27 +76,15 @@ def clear_envvars():
             if k.startswith("AWS_") or k.startswith("DML_"):
                 del os.environ[k]
         os.environ["AWS_SHARED_CREDENTIALS_FILE"] = "/dev/null"
-        yield
-
-@pytest.fixture(autouse=True)
-def setup_environment(clear_envvars):
-    """Set up test environment variables.
-
-    This fixture sets up common environment variables needed by many tests.
-    It also restores the original environment after the test.
-    """
-    with patch.dict("os.environ"):
-        for k in os.environ:
-            if k.startswith("DML_"):
-                del os.environ[k]
-        os.environ["DML_CACHE_PATH"] = CACHE_PATH
-        os.environ["DML_CACHE_KEY"] = CACHE_KEY
         os.environ["DML_S3_BUCKET"] = S3_BUCKET
         os.environ["DML_S3_PREFIX"] = S3_PREFIX
-        os.environ["DML_RUN_ID"] = TEST_RUN_ID
-        with tmpdir() as tmpd:
-            os.environ["DML_FN_CACHE_DIR"] = tmpd
-            yield
+        yield
+
+
+@pytest.fixture
+def dml(tmpdir):
+    with Dml.temporary(cache_path=str(tmpdir)) as dml:
+        yield dml
 
 
 @pytest.fixture
@@ -124,38 +122,3 @@ def dynamodb_table(aws_server):
     with patch.dict(os.environ, {"DYNAMODB_TABLE": DYNAMO_TABLE}):
         yield DYNAMO_TABLE
     dynamodb.delete_table(TableName=DYNAMO_TABLE)
-
-
-@pytest.fixture
-def test_config():
-    """Return a test configuration object."""
-    return EnvConfig.from_env(debug=False)
-
-
-@pytest.fixture
-def io_capture():
-    """Capture stdout and stderr for testing.
-
-    This fixture redirects stdout and stderr to StringIO objects for capturing
-    and testing output. It restores the original stdout and stderr after the test.
-
-    Returns
-    -------
-    tuple
-        (stdout_capture, stderr_capture) as StringIO objects
-    """
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    stdout_capture = StringIO()
-    stderr_capture = StringIO()
-    sys.stdout = stdout_capture
-    sys.stderr = stderr_capture
-    yield stdout_capture, stderr_capture
-    sys.stdout = original_stdout
-    sys.stderr = original_stderr
-
-@pytest.fixture
-def adapter_setup():
-    """Patch the setup method of all adapters."""
-    with patch.object(AdapterBase, "_setup", return_value=None) as mock_setup:
-        yield mock_setup

@@ -60,7 +60,7 @@ def funkify(
     adapter: Union[Resource, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
-) -> Callable[[Callable[["daggerml.core.Dag"], Any]], Resource]: ...
+) -> Callable[[Union[Callable[["daggerml.core.Dag"], Any], Resource]], Resource]: ...
 
 
 @overload

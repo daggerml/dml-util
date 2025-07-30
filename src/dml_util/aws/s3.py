@@ -98,7 +98,6 @@ class S3Store:
             name_or_uri = name_or_uri.value()
         if isinstance(name_or_uri, Resource):
             name_or_uri = name_or_uri.uri
-        assert isinstance(name_or_uri, str), "name_or_uri must be a string or Resource"
         p = urlparse(name_or_uri)
         if p.scheme == "s3":
             return p.netloc, p.path[1:]
@@ -205,27 +204,22 @@ class S3Store:
             subprocess.run(["tar", "-xvf", tmpf.name, "-C", dest], check=True)
 
     @overload
-    def rm(self, name_or_uri: Sequence[Union[str, Resource]]) -> None:
-        """Remove multiple objects from S3."""
+    def rm(self, name_or_uri: Sequence[Union[str, Resource, Node]]) -> None:
+        """Remove objects from S3."""
         ...
 
     @overload
-    def rm(self, *name_or_uri: Union[str, Resource]) -> None:
-        """Remove a single object from S3."""
+    def rm(self, *name_or_uri: Union[str, Resource, Node]) -> None:
+        """Remove objects from S3."""
         ...
 
-    def rm(
-        self,
-        name_or_uri: Union[str, Resource, Sequence[Union[str, Resource]]],
-        *name_or_uris: Union[str, Resource],
-    ) -> None:
+    def rm(self, *name_or_uris: Union[str, Resource, Node, Sequence[Union[str, Resource, Node]]]) -> None:
         """Remove objects from S3."""
-        if isinstance(name_or_uri, (list, tuple)):
-            assert len(name_or_uris) == 0, "Cannot pass both a sequence and additional arguments"
-            name_or_uris = tuple(name_or_uri)
-        else:
-            assert isinstance(name_or_uri, (str, Resource)), "name_or_uri must be a string or Resource"
-            name_or_uris = tuple([name_or_uri, *name_or_uris])
+        if len(name_or_uris) == 1 and isinstance(name_or_uris[0], (list, tuple)):
+            name_or_uris = tuple(name_or_uris[0])
+        assert not any(isinstance(x, (tuple, list)) for x in name_or_uris), "rm does not support nested lists or tuples"
+        if len(name_or_uris) == 0:
+            return
         for bucket, objs in groupby(map(self.parse_uri, sorted(name_or_uris)), key=lambda x: x[0]):
             for batch in batched((x[1] for x in objs), 1000):
                 self.client.delete_objects(

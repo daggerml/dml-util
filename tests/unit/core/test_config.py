@@ -3,7 +3,8 @@
 import json
 
 from dml_util.core.config import EnvConfig, InputConfig
-from tests.conftest import CACHE_KEY, CACHE_PATH, S3_BUCKET, S3_PREFIX
+from tests.conftest import S3_BUCKET, S3_PREFIX
+from tests.unit.conftest import CACHE_KEY, CACHE_PATH
 
 
 class TestEnvConfig:
