@@ -56,7 +56,6 @@ Issues = "https://github.com/daggerml/dml-util/issues"
 Source = "https://github.com/daggerml/dml-util"
 
 [tool.pytest.ini_options]
-# pythonpath = "tests/"
 minversion = "6.0"
 addopts = "-ra --ignore=submodules/"
 testpaths = [
