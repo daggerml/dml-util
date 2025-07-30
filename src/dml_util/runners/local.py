@@ -9,9 +9,7 @@ import json
 import logging
 import os
 import shlex
-import shutil
 import subprocess
-from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from textwrap import dedent
 
@@ -134,17 +132,13 @@ class HatchRunner(WrappedRunner):
     """Runs a script in a Hatch environment."""
 
     @classmethod
-    def funkify(cls, name, sub, path=None, hatch_path=None):
-        if hatch_path is None:
-            hatch_path = str(Path(shutil.which("hatch")).parent)
-            logger.info("Set hatch path to: %r", hatch_path)
+    def funkify(cls, name, sub, path=None):
         cd_str = "" if path is None else f"cd {shlex.quote(path)}"
         script = dedent(
             f"""
             #!/usr/bin/env bash
             set -euo pipefail
 
-            export PATH={shlex.quote(hatch_path)}:$PATH
             which hatch >&2 || {{ echo "ERROR: hatch not found in PATH" >&2; exit 1; }}
             {cd_str}
             hatch env create {name} >&2 || echo "ERROR: hatch env create failed" >&2
@@ -156,7 +150,7 @@ class HatchRunner(WrappedRunner):
                 echo "$INPUT_DATA" >&2
                 echo "DONE with input data" >&2
             fi
-            echo "$INPUT_DATA" | {shlex.quote(hatch_path)}/hatch -e {name} run "$@"
+            echo "$INPUT_DATA" | hatch -e {name} run "$@"
             """
         ).strip()
         return WrappedRunner.funkify(script, sub)

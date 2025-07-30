@@ -186,13 +186,14 @@ class TestHatchRunner:
     def test_hatch_script_passes_env(self):
         js = HatchRunner.funkify("pandas", None)
         resp = subprocess.run(
-            ["bash", "-c", js["script"], "script", "env"],
-            env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo"},
+            ["bash", "-c", js["script"], "_", "env"],
+            env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo", "PATH": os.environ["PATH"]},
             input="testing...",
             capture_output=True,
             timeout=1,
             text=True,
         )
+        assert resp.returncode == 0, f"Script failed: {resp.stderr}"
         lines = resp.stdout.splitlines()
         env = {k: v for k, v in (x.split("=", 1) for x in lines) if k.startswith("DML_")}
         assert env["DML_CACHE_KEY"] == "test_key"
