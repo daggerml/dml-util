@@ -110,7 +110,7 @@ class RunnerBase:
             else:
                 self.state.unlock()
 
-    def update(self, state) -> tuple[dict | None, str, str]:
+    def update(self, state) -> tuple[Union[dict, None], str, str]:
         """Update the state and return the new state, message, and response.
 
         The `gc` method is called if and only if the returned state is None.
