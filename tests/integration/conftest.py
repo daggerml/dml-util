@@ -94,6 +94,12 @@ def sshd_server():
             yield flags, f"{getpass.getuser()}@127.0.0.1"
     finally:
         if sshd_proc:
+            # print stdout and stderr from sshd
+            stdout, stderr = sshd_proc.communicate(timeout=1)
+            if stdout:
+                print(f"sshd stdout:\n{stdout.decode()}")
+            if stderr:
+                print(f"sshd stderr:\n{stderr.decode()}")
             sshd_proc.terminate()
             try:
                 sshd_proc.wait(timeout=5)
@@ -114,7 +120,7 @@ def ssh_resource_data(sshd_server, tmpdir, aws_server):
                     """
                 ).strip()
             )
-            for x in [shutil.which(y) for y in ["docker", "hatch"]]:
+            for x in [shutil.which(y) for y in ["docker", "hatch", "uv"]]:
                 if x:
                     f.write(f"\nexport PATH={shlex.quote(os.path.dirname(x))}:$PATH")
             for k, v in aws_server["envvars"].items():

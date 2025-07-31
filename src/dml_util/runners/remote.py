@@ -64,6 +64,7 @@ class SshRunner(RunnerBase):
         return resp.stdout.strip(), stderr
 
     def run(self):
+        # use try cache to guarantee cleanup
         sub_adapter, sub_uri, sub_kwargs = self.input.get_sub()
         tmpf = self.proc_script()
         stdout, stderr = self._run_cmd(tmpf, sub_adapter, sub_uri, input=sub_kwargs)
