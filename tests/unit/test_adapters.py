@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from daggerml import Error, Resource
+from daggerml.core import from_json
 
 from dml_util.adapters import LambdaAdapter, LocalAdapter
 from dml_util.adapters.base import AdapterBase, _read_data, _write_data
@@ -392,8 +393,10 @@ class TestCLIInterface:
         ):
             status = cls.cli(MockArgs)
 
-            assert status == 1
+            assert status == 0
             mock_write.assert_called_once()
             # Ensure error message contains the exception
             args, _ = mock_write.call_args
-            assert "Test error" in args[0]
+            data = from_json(args[0])
+            assert isinstance(data, Error)
+            assert data.message == "Test error"
