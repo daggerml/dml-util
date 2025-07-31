@@ -11,132 +11,24 @@ import boto3
 import pytest
 from daggerml import Dml, Error, Resource
 
-import dml_util.adapters as adapter
 import dml_util.wrapper  # noqa: F401
 from dml_util import funk
 from dml_util.aws.s3 import S3Store
 from dml_util.funk import funkify
-from tests.util import (
-    S3_BUCKET,
-    S3_PREFIX,
-    CliArgs,
-    FullDmlTestCase,
-    _root_,
-    tmpdir,
-)
+from tests.util import _root_
 
 pytestmark = pytest.mark.slow  # marks the entire file as slow for pytest.
 VALID_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+")
 
 
-class TestTooling(FullDmlTestCase):
-    def test_s3_uri(self):
-        s3 = S3Store()
-        raw = b"foo bar baz"
-        resp = s3.put(raw, name="foo.txt")
-        assert resp.uri == f"s3://{S3_BUCKET}/{S3_PREFIX}/data/foo.txt"
-        resp = s3.put(raw, uri=f"s3://{S3_BUCKET}/data/asdf/foo.txt")
-        assert resp.uri == f"s3://{S3_BUCKET}/data/asdf/foo.txt"
-
-    def test_runner(self):
-        os.environ["DML_CACHE_KEY"] = "test_key"
-        with tmpdir() as tmpd:
-            conf = CliArgs(
-                uri="asdf:uri",
-                input=f"{tmpd}/input.dump",
-                output=f"{tmpd}/output.dump",
-                error=f"{tmpd}/error.dump",
-                n_iters=1,
-            )
-            with open(conf.input, "w") as f:
-                f.write("foo")
-            with patch.object(adapter.AdapterBase, "send_to_remote", return_value=(None, "testing0")):
-                status = adapter.AdapterBase.cli(conf)
-                assert status == 0
-                assert not os.path.exists(conf.output)
-                with open(conf.error, "r+") as f:
-                    assert f.read().strip() == "testing0"
-                os.truncate(conf.error, 0)
-            with patch.object(
-                adapter.AdapterBase,
-                "send_to_remote",
-                return_value=("my-dump", "testing1"),
-            ):
-                status = adapter.AdapterBase.cli(conf)
-                assert status == 0
-                with open(conf.output, "r") as f:
-                    assert f.read() == "my-dump"
-                os.truncate(conf.output, 0)
-                with open(conf.error, "r") as f:
-                    assert f.read().strip() == "testing1"
-                os.truncate(conf.error, 0)
-
+class TestMisc:
     def test_git_info(self):
         with Dml.temporary() as dml:
             d0 = dml.new("d0", "d0")
             git_info = d0[".dml/git"].value()
             assert isinstance(git_info, dict)
-            self.assertCountEqual(git_info.keys(), ["branch", "commit", "remote", "status"])
+            assert set(git_info) == {"branch", "commit", "remote", "status"}
             assert all(type(x) is str for x in git_info.values())
-
-    def test_funkify(self):
-        def fn(*args):
-            return sum(args)
-
-        @funkify(extra_fns=[fn])
-        def dag_fn(dag):
-            import sys  # noqa: F811
-
-            print("testing stdout...")
-            print("testing stderr...", file=sys.stderr)
-            dag.result = fn(*dag.argv[1:].value())
-            return dag.result
-
-        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
-            with Dml.temporary(cache_path=tmpd) as dml:
-                vals = [1, 2, 3]
-                with dml.new("d0", "d0") as d0:
-                    d0.f0 = dag_fn
-                    d0.n0 = d0.f0(*vals)
-                    assert d0.n0.value() == sum(vals)
-                    # you can get the original back
-                    d0.f1 = funkify(dag_fn.fn, extra_fns=[fn])
-                    d0.n1 = d0.f1(*vals)
-                    assert d0.n1.value() == sum(vals)
-                    dag = dml.load(d0.n1)
-                    assert dag.result is not None
-                dag = dml("dag", "describe", dag._ref.to)
-
-    def test_funkify_logs(self):
-        @funkify
-        def dag_fn(dag):
-            import sys  # noqa: F811
-
-            print("testing stdout...")
-            print("testing stderr...", file=sys.stderr)
-            dag.result = sum(dag.argv[1:].value())
-            return dag.result
-
-        client = boto3.client("logs", endpoint_url=self.moto_endpoint)
-        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
-            with Dml.temporary(cache_path=tmpd) as dml:
-                vals = [1, 2, 3]
-                with dml.new("d0", "d0") as d0:
-                    d0.f0 = dag_fn
-                    node = d0.f0(*vals)
-                    dag = node.load()
-                config = dag[".dml/env"].value()
-        logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stdout"])["events"]
-        self.assertCountEqual(
-            [
-                f"*** Starting {config['run_id']} ***",
-                "testing stdout...",
-                f"*** Ending {config['run_id']} ***",
-            ],
-            {x["message"] for x in logs},
-        )
-        logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stderr"])["events"]
-        assert "testing stderr..." in {x["message"] for x in logs}
 
     def test_subdag_caching(self):
         @funkify
@@ -165,7 +57,39 @@ class TestTooling(FullDmlTestCase):
                 assert a[0].value() == b[0].value()
                 assert a[1].value() != b[1].value()
 
-    def test_funkify_errors(self):
+
+class TestFunkSingles:
+    @pytest.mark.usefixtures("s3_bucket", "logs")
+    def test_script(self):
+        @funkify
+        def dag_fn(dag):
+            import sys  # noqa: F811
+
+            print("testing stdout...")
+            print("testing stderr...", file=sys.stderr)
+            dag.result = sum(dag.argv[1:].value())
+            return dag.result
+
+        client = boto3.client("logs")
+        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
+            with Dml.temporary(cache_path=tmpd) as dml:
+                vals = [1, 2, 3]
+                with dml.new("d0", "d0") as d0:
+                    d0.f0 = dag_fn
+                    node = d0.f0(*vals)
+                    dag = node.load()
+                config = dag[".dml/env"].value()
+        logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stdout"])["events"]
+        assert [
+            f"*** Starting {config['run_id']} ***",
+            "testing stdout...",
+            f"*** Ending {config['run_id']} ***",
+        ] == [x["message"] for x in logs]
+        logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stderr"])["events"]
+        assert "testing stderr..." in {x["message"] for x in logs}
+
+    @pytest.mark.usefixtures("s3_bucket", "logs")
+    def test_script_errors(self):
         @funkify
         def dag_fn(dag):
             dag.result = dag.argv[1].value() / dag.argv[-1].value()
@@ -175,11 +99,10 @@ class TestTooling(FullDmlTestCase):
             with Dml.temporary(cache_path=tmpd) as dml:
                 d0 = dml.new("d0", "d0")
                 d0.f0 = dag_fn
-                with self.assertRaisesRegex(Error, "division by zero"):
+                with pytest.raises(Error) as exc:
                     d0.n0 = d0.f0(1, 0)
+                assert "division by zero" in str(exc.value)
 
-
-class TestFunkSingles:
     @skipUnless(shutil.which("hatch"), "hatch is not available")
     @pytest.mark.usefixtures("s3_bucket", "logs")
     def test_hatch(self):
@@ -248,6 +171,43 @@ class TestFunkSingles:
                     res = dag.fn(1, 2, 3)
                     assert res.value() == 6
 
+    @skipUnless(shutil.which("ssh"), "ssh is not available")
+    @skipUnless(shutil.which("hatch"), "hatch is not available")
+    def test_ssh_error(self, ssh_resource_data):
+        @funkify(uri="ssh", data=ssh_resource_data)
+        @funkify
+        def fn(dag):
+            *nums, divisor = dag.argv[1:].value()
+            return sum(nums) / divisor
+
+        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
+            with Dml.temporary(cache_path=tmpd) as dml:
+                with dml.new("test", "asdf") as dag:
+                    dag.fn = fn
+                    with pytest.raises(Error) as exc:
+                        # This should raise a division by zero error
+                        dag.n0 = dag.fn(1, 2, 3, 0)
+                    assert "division by zero" in str(exc.value)
+
+    @skipUnless(shutil.which("ssh"), "ssh is not available")
+    def test_ssh_adapter_error(self, ssh_resource_data):
+        old_path = os.environ["PATH"]
+        with patch.dict(os.environ, {"PATH": f"{_root_}/tests/assets:{old_path}"}):
+
+            @funkify(uri="ssh", data=ssh_resource_data)
+            @funkify(uri="bogus", adapter="error-adapter.py")
+            @funkify
+            def fn(dag):
+                return
+
+            with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
+                with Dml.temporary(cache_path=tmpd) as dml:
+                    dag = dml.new("test", "asdf")
+                    dag.fn = fn
+                    with pytest.raises(Error) as exc:
+                        dag.n0 = dag.fn(1, 2, 3)
+                    assert "Simulated adapter error" in str(exc.value)
+
     @pytest.mark.usefixtures("s3_bucket")
     def test_notebooks(self):
         s3 = S3Store()
@@ -292,7 +252,7 @@ class TestFunkSingles:
                 dag.stack = dag.cfn("stacker", tpl, {})
                 assert set(dag.stack.keys()) == {"BucketName", "BucketArn"}
 
-    @pytest.mark.usefixtures("s3_bucket", "logs")
+    @pytest.mark.usefixtures("s3_bucket", "logs", "debug")
     def test_docker(self, docker_flags):
         @funkify
         def fn(dag):
@@ -307,18 +267,21 @@ class TestFunkSingles:
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
             with Dml.temporary(cache_path=tmpd) as dml, patch.dict(os.environ, {"DML_FN_CACHE_DIR": tmpd}):
                 dag = dml.new("test", "asdf")
-                excludes = ["tests/*.py", ".pytest_cache", ".ruff_cache", "__pycache__"]
+                excludes = [
+                    "tests/*.py",
+                    ".pytest_cache",
+                    ".ruff_cache",
+                    "__pycache__",
+                    "examples",
+                    ".venv",
+                    "**/.venv",
+                ]
                 with redirect_stdout(None), redirect_stderr(None):
                     dag.tar = s3.tar(dml, str(_root_), excludes=excludes)
                 dag.dkr = funk.dkr_build
                 dag.img = dag.dkr(
                     dag.tar,
-                    [
-                        "--platform",
-                        "linux/amd64",
-                        "-f",
-                        "tests/assets/dkr-context/Dockerfile",
-                    ],
+                    ["--platform", "linux/amd64", "-f", "tests/assets/dkr-context/Dockerfile"],
                     timeout=60_000,
                 )
                 dag.fn = funkify(
@@ -455,17 +418,21 @@ class TestFunkCombos:
         vals = [1, 2, 3]
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
             with Dml.temporary(cache_path=tmpd) as dml, patch.dict(os.environ, {"DML_FN_CACHE_DIR": tmpd}):
+                excludes = [
+                    "tests/*.py",
+                    ".pytest_cache",
+                    ".ruff_cache",
+                    "__pycache__",
+                    "examples",
+                    ".venv",
+                    "**/.venv",
+                ]
                 dag = dml.new("test", "asdf")
-                dag.tar = s3.tar(dml, _root_, excludes=["tests/*.py"])
+                dag.tar = s3.tar(dml, _root_, excludes=excludes)
                 dag.dkr = funkify(dkr_build_in_hatch, uri="ssh", data=ssh_resource_data)
                 dag.img = dag.dkr(
                     dag.tar,
-                    [
-                        "--platform",
-                        "linux/amd64",
-                        "-f",
-                        "tests/assets/dkr-context/Dockerfile",
-                    ],
+                    ["--platform", "linux/amd64", "-f", "tests/assets/dkr-context/Dockerfile"],
                     timeout=60_000,
                 )
                 dag.fn = funkify(

@@ -18,6 +18,7 @@ from dml_util.aws import get_client
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class Streamer:
     log_group_name: str
@@ -78,12 +79,11 @@ class Streamer:
         try:
             self.put(f"*** Starting {self.run_id} ***")
             for line in iter(self.fd.readline, ""):
-                if not line.strip():
-                    continue
-                self.put(line.strip())
+                if line.strip():
+                    self.put(line.strip())
             self.put(f"*** Ending {self.run_id} ***")
         except Exception as e:
-            self.put(f"*** Error in {self.run_id}: {e} ***"),
+            self.put(f"*** Error in {self.run_id}: {e} ***")
             [self.put(line) for line in traceback.format_exc().splitlines()]
             self.put(f"** Ending {self.run_id} due to error ***")
         finally:

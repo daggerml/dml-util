@@ -4,6 +4,7 @@ import re
 from contextlib import contextmanager
 from functools import partial
 from inspect import getsource
+from shutil import which
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union, overload
 from urllib.parse import urlparse
@@ -148,7 +149,10 @@ def funkify(
         return Resource(adapter.uri, data={"sub": fn, **(data or {})}, adapter=adapter.adapter)
     adapter_ = AdapterBase.ADAPTERS.get(adapter)
     if adapter_ is None:
-        raise ValueError(f"Adapter: {adapter!r} does not exist")
+        adapter_ = which(adapter)
+        if adapter_ is None:
+            raise ValueError(f"Adapter: {adapter!r} does not exist")
+        return Resource(uri=uri, data=data, adapter=adapter_)
     data = data or {}
     if isinstance(fn, Resource):
         data = {"sub": fn, **data}

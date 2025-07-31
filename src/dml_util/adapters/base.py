@@ -205,6 +205,8 @@ class AdapterBase:
             dump = _read_data(args.input)
             while n_iters > 0:
                 resp, msg = cls.send_to_remote(args.uri, config, dump)
+                logger.debug("response: %r", resp)
+                logger.info("message: %r", msg)
                 _write_data(msg, args.error, mode="a")
                 if resp:
                     _write_data(resp, args.output)

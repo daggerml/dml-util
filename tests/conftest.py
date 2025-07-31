@@ -82,6 +82,13 @@ def clear_envvars():
 
 
 @pytest.fixture
+def debug(clear_envvars):
+    """Fixture to set debug mode for tests."""
+    with patch.dict(os.environ, {"DML_DEBUG": "1"}):
+        yield
+
+
+@pytest.fixture
 def dml(tmpdir):
     with Dml.temporary(cache_path=str(tmpdir)) as dml:
         yield dml
