@@ -228,7 +228,7 @@ class AdapterBase:
         return Resource(uri, data=data, adapter=cls.ADAPTER)
 
     @classmethod
-    def send_to_remote(cls, uri, config: EnvConfig, dump: str) -> tuple[Union[str, None], str]:
+    def send_to_remote(cls, uri: str, config: EnvConfig, dump: str) -> tuple[Union[str, None], str]:
         """Send data to a remote service specified by the URI.
 
         Parameters

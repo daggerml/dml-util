@@ -104,7 +104,7 @@ class RunnerBase:
             raise
         finally:
             if delete:
-                if not os.getenv("DML_NO_GC"):
+                if not os.getenv("DML_NO_GC"):  # FIXME: remove this
                     self.gc(state)
                 self.state.delete()
             else:

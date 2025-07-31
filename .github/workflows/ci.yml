@@ -40,6 +40,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install --constraint /tmp/reqs.txt .[dev]
       - name: pytest
+        env:
+          DML_DEBUG: "1"
         # run: pytest ./tests/unit/ --cov
         run: pytest ./tests/unit/
       # - name: Upload coverage artifact
@@ -78,6 +80,8 @@ jobs:
           pip install --upgrade pip
           pip install --constraint /tmp/reqs.txt .[dev,dml,nb]
       - name: pytest
+        env:
+          DML_DEBUG: "1"
         run: |
           # pytest --cov -m "not slow"
           pytest -m "not slow"
@@ -115,6 +119,8 @@ jobs:
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
           conda run -n dml-pandas pip install --constraint /tmp/reqs.txt .[dev,dml]
       - name: pytest
+        env:
+          DML_DEBUG: "1"
         run: |
           # pytest --cov
           pytest .
