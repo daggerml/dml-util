@@ -217,6 +217,7 @@ class AdapterBase:
             logger.exception("Error in adapter")
             try:
                 _write_data(to_json(Error.from_ex(e)), args.output)
+                return 0
             except Exception:
                 logger.exception("cannot write to %r", args.output)
             return 1
