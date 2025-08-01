@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from time import time
 from typing import Union
 from uuid import uuid4
 
@@ -16,7 +17,7 @@ import boto3
 
 from dml_util.aws import get_client
 from dml_util.core.state import TIMEOUT, State
-from dml_util.core.utils import js_dump, now
+from dml_util.core.utils import js_dump
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class DynamoState(State):
             data otherwise
         """
         logger.info("acquiring lock for %r", self.cache_key)
-        ut = now()
+        ut = time()
         resp = self._update(
             key,
             UpdateExpression="SET #lk = :lk, #ut = :ut",
@@ -106,7 +107,7 @@ class DynamoState(State):
             ExpressionAttributeValues={
                 ":lk": {"S": self.run_id},
                 ":obj": {"S": js_dump(obj)},
-                ":ut": {"N": str(round(now(), 2))},
+                ":ut": {"N": str(round(time(), 2))},
             },
         )
         return resp is not None

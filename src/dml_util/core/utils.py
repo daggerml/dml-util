@@ -12,7 +12,6 @@ import logging
 import os
 import subprocess
 from itertools import islice, product
-from time import time
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +58,6 @@ def dict_product(d):
     keys = list(d.keys())
     for combination in product(*d.values()):
         yield dict(zip(keys, combination))
-
-
-def now():
-    return time()
 
 
 def _run_cli(command, capture_output=True, check=True, **kw):
@@ -125,11 +120,11 @@ def compute_hash(obj, chunk_size=8192, hash_algorithm="sha256"):
 def batched(iterable, n, *, strict=False):
     # batched('ABCDEFG', 3) → ABC DEF G
     if n < 1:
-        raise ValueError('n must be at least one')
+        raise ValueError("n must be at least one")
     iterator = iter(iterable)
     while batch := tuple(islice(iterator, n)):
         if strict and len(batch) != n:
-            raise ValueError('batched(): incomplete batch')
+            raise ValueError("batched(): incomplete batch")
         yield batch
 
 
@@ -141,4 +136,3 @@ def exactly_one(**kw):
     if len(keys) > 1:
         msg = f"must specify only one of: {sorted(kw.keys())} but {keys} are all not None"
         raise ValueError(msg)
-
