@@ -160,6 +160,7 @@ class TestFunkSingles:
     @skipUnless(shutil.which("hatch"), "hatch is not available")
     def test_ssh(self, ssh_resource_data):
         @funkify(uri="ssh", data=ssh_resource_data)
+        @funkify(uri="hatch", data={"name": "pandas", "path": str(_root_)})
         @funkify
         def fn(dag):
             return sum(dag.argv[1:].value())
@@ -175,6 +176,7 @@ class TestFunkSingles:
     @skipUnless(shutil.which("hatch"), "hatch is not available")
     def test_ssh_error(self, ssh_resource_data):
         @funkify(uri="ssh", data=ssh_resource_data)
+        @funkify(uri="hatch", data={"name": "pandas", "path": str(_root_)})
         @funkify
         def fn(dag):
             *nums, divisor = dag.argv[1:].value()
