@@ -229,6 +229,15 @@ class TestCondaRunner:
 
     @pytest.mark.skipif(not which("conda"), reason="conda command not found")
     def test_conda_script_passes_env(self):
+        # list conda envs and skip if "dml-pandas" is not found
+        envs = subprocess.run(
+            ["conda", "env", "list"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        if "dml-pandas" not in envs:
+            pytest.skip("dml-pandas conda environment not found")
         js = CondaRunner.funkify("dml-pandas", None)
         resp = subprocess.run(
             ["bash", "-c", js["script"], "script", "env"],
