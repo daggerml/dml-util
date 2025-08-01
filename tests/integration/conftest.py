@@ -97,9 +97,9 @@ def sshd_server():
             # print stdout and stderr from sshd
             stdout, stderr = sshd_proc.communicate(timeout=1)
             if stdout:
-                print(f"sshd stdout:\n{stdout.decode()}")
+                print(f"sshd stdout:\n{stdout.decode()}", file=sys.stderr)
             if stderr:
-                print(f"sshd stderr:\n{stderr.decode()}")
+                print(f"sshd stderr:\n{stderr.decode()}", file=sys.stderr)
             sshd_proc.terminate()
             try:
                 sshd_proc.wait(timeout=5)
