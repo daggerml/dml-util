@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from typing import Union
 from uuid import uuid4
 
 import boto3
@@ -35,7 +36,7 @@ class DynamoState(State):
     run_id : str, optional
         Unique identifier for the current run, used for locking.
         Defaults to a random UUID.
-    timeout : int, optional
+    timeout : int, float, optional
         Lock timeout in seconds. Defaults to TIMEOUT (5 seconds).
     db : boto3.client, optional
         DynamoDB client. Defaults to a new client created using get_client.
@@ -46,9 +47,9 @@ class DynamoState(State):
 
     cache_key: str
     run_id: str = field(default_factory=lambda: uuid4().hex)
-    timeout: int = field(default=TIMEOUT)
+    timeout: Union[int, float] = field(default=TIMEOUT)
     db: "boto3.client" = field(default_factory=lambda: get_client("dynamodb"))
-    tb: str = field(default_factory=lambda: os.getenv("DYNAMODB_TABLE"))
+    tb: str = field(default_factory=lambda: os.environ["DYNAMODB_TABLE"])
 
     def _update(self, key=None, **kw):
         try:
@@ -136,4 +137,3 @@ class DynamoState(State):
         except Exception as e:
             if getattr(e, "response", {}).get("Error", {}).get("Code") != "ConditionalCheckFailedException":
                 raise
-

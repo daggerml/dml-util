@@ -74,7 +74,7 @@ class TestDynamoState:
 
     @pytest.mark.usefixtures("dynamodb_table")
     def test_dynamo_locking(self):
-        timeout = 0.05
+        timeout = 0.25
         db0 = DynamoState("test-key", timeout=timeout)
         db1 = DynamoState("test-key", timeout=timeout)
         assert db0.get() == {}
@@ -82,7 +82,7 @@ class TestDynamoState:
         assert db1.put({"asdf": 23}) is False
         assert db0.put({"q": "b"}) is True
         # relocking works
-        sleep(timeout * 2)
+        sleep(timeout)
         assert db1.get() == {"q": "b"}
         assert db0.unlock() is False
         assert db1.unlock() is True
