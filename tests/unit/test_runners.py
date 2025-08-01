@@ -227,7 +227,7 @@ class TestCondaRunner:
                     "data": {"param": "value"},
                 }
 
-    @pytest.mark.skipif(not which("uv"), reason="uv command not found")
+    @pytest.mark.skipif(not which("conda"), reason="conda command not found")
     def test_conda_script_passes_env(self):
         js = CondaRunner.funkify("dml-pandas", None)
         resp = subprocess.run(
