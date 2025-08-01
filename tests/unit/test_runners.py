@@ -234,6 +234,7 @@ class TestCondaRunner:
             ["bash", "-c", js["script"], "script", "env"],
             env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo"},
             input="testing...",
+            check=True,
             capture_output=True,
             timeout=10,
             text=True,
