@@ -15,7 +15,9 @@ MEM_MAX = 151
 @pytest.fixture(autouse=True)
 def add_envvars():
     with patch.dict(os.environ):
-        os.environ.update({"CPU_QUEUE": "cpu-q", "GPU_QUEUE": "gpu-q", "BATCH_TASK_ROLE_ARN": "arn"})
+        os.environ.update(
+            {"CPU_QUEUE": "cpu-q", "GPU_QUEUE": "gpu-q", "BATCH_TASK_ROLE_ARN": "arn", "DYNAMODB_TABLE": "test-job"}
+        )
         yield
 
 

@@ -21,6 +21,8 @@ class TestDynamoState:
         self.table_name = "test-job"
         self.table_arn = f"arn:aws:dynamodb:us-east-1:123456789012:table/{self.table_name}"
         self.cache_key = "test-key"
+        with patch.dict("os.environ", {"DYNAMODB_TABLE": self.table_name}):
+            yield
 
     def test_dynamostate_initialization(self):
         """Test DynamoState initialization.
