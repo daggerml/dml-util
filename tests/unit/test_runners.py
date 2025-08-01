@@ -238,10 +238,8 @@ class TestCondaRunner:
             timeout=1,
             text=True,
         )
-        lines = resp.stdout.splitlines()
-        env = {k: v for k, v in (x.split("=", 1) for x in lines) if k.startswith("DML_")}
-        assert env["DML_CACHE_KEY"] == "test_key"
-        assert env["DML_CACHE_PATH"] == "foo"
+        assert "DML_CACHE_KEY=test_key" in resp.stdout
+        assert "DML_CACHE_PATH=foo" in resp.stdout
 
 
 @pytest.mark.skipif(not which("uv"), reason="uv command not found")
