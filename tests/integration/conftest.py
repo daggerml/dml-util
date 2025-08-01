@@ -61,7 +61,7 @@ def sshd_server():
             sshd_path = shutil.which("sshd")
             assert sshd_path, "sshd must be available in PATH"
             sshd_proc = subprocess.Popen(
-                [sshd_path, "-f", sshd_config_path, "-D"],
+                [sshd_path, "-f", sshd_config_path, "-D", "-e"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -79,12 +79,12 @@ def sshd_server():
             deadline = time.time() + 5  # wait up to 5 seconds
             while time.time() < deadline:
                 if sshd_proc.poll() is not None:
-                    stdout, stderr = sshd_proc.communicate(timeout=1)
+                    stdout, stderr = sshd_proc.communicate(timeout=20)
                     raise RuntimeError(
                         f"sshd terminated unexpectedly.\nstdout: {stdout.decode()}\nstderr: {stderr.decode()}"
                     )
                 try:
-                    test_sock = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+                    test_sock = socket.create_connection(("127.0.0.1", port), timeout=20)
                     test_sock.close()
                     break
                 except (ConnectionRefusedError, OSError):
@@ -95,14 +95,14 @@ def sshd_server():
     finally:
         if sshd_proc:
             # print stdout and stderr from sshd
-            stdout, stderr = sshd_proc.communicate(timeout=1)
+            stdout, stderr = sshd_proc.communicate(timeout=20)
             if stdout:
                 print(f"sshd stdout:\n{stdout.decode()}", file=sys.stderr)
             if stderr:
                 print(f"sshd stderr:\n{stderr.decode()}", file=sys.stderr)
             sshd_proc.terminate()
             try:
-                sshd_proc.wait(timeout=5)
+                sshd_proc.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 sshd_proc.kill()
 
