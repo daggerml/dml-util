@@ -157,41 +157,6 @@ class TestFunkSingles:
         assert logs[1]["message"] == "testing stdout..."
 
     @skipUnless(shutil.which("ssh"), "ssh is not available")
-    @skipUnless(shutil.which("hatch"), "hatch is not available")
-    def test_ssh(self, ssh_resource_data):
-        @funkify(uri="ssh", data=ssh_resource_data)
-        @funkify(uri="hatch", data={"name": "pandas", "path": str(_root_)})
-        @funkify
-        def fn(dag):
-            return sum(dag.argv[1:].value())
-
-        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
-            with Dml.temporary(cache_path=tmpd) as dml:
-                with dml.new("test", "asdf") as dag:
-                    dag.fn = fn
-                    res = dag.fn(1, 2, 3)
-                    assert res.value() == 6
-
-    @skipUnless(shutil.which("ssh"), "ssh is not available")
-    @skipUnless(shutil.which("hatch"), "hatch is not available")
-    def test_ssh_error(self, ssh_resource_data):
-        @funkify(uri="ssh", data=ssh_resource_data)
-        @funkify(uri="hatch", data={"name": "pandas", "path": str(_root_)})
-        @funkify
-        def fn(dag):
-            *nums, divisor = dag.argv[1:].value()
-            return sum(nums) / divisor
-
-        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
-            with Dml.temporary(cache_path=tmpd) as dml:
-                with dml.new("test", "asdf") as dag:
-                    dag.fn = fn
-                    with pytest.raises(Error) as exc:
-                        # This should raise a division by zero error
-                        dag.n0 = dag.fn(1, 2, 3, 0)
-                    assert "division by zero" in str(exc.value)
-
-    @skipUnless(shutil.which("ssh"), "ssh is not available")
     def test_ssh_adapter_error(self, ssh_resource_data):
         old_path = os.environ["PATH"]
         with patch.dict(os.environ, {"PATH": f"{_root_}/tests/assets:{old_path}"}):
@@ -401,6 +366,25 @@ class TestFunkCombos:
                     dag2 = dml.load(res)
                     assert dag2.result is not None
                 dag = dml("dag", "describe", dag2._ref.to)
+
+    @skipUnless(shutil.which("ssh"), "ssh is not available")
+    @skipUnless(shutil.which("hatch"), "hatch is not available")
+    def test_ssh_hatch_error(self, ssh_resource_data):
+        @funkify(uri="ssh", data=ssh_resource_data)
+        @funkify(uri="hatch", data={"name": "default", "path": str(_root_)})
+        @funkify
+        def fn(dag):
+            *nums, divisor = dag.argv[1:].value()
+            return sum(nums) / divisor
+
+        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
+            with Dml.temporary(cache_path=tmpd) as dml:
+                with dml.new("test", "asdf") as dag:
+                    dag.fn = fn
+                    with pytest.raises(Error) as exc:
+                        # This should raise a division by zero error
+                        dag.n0 = dag.fn(1, 2, 3, 0)
+                    assert "division by zero" in str(exc.value)
 
     @skipUnless(shutil.which("ssh"), "ssh is not available")
     @skipUnless(shutil.which("docker"), "docker not available")
