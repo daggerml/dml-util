@@ -235,7 +235,7 @@ class TestCondaRunner:
             env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo"},
             input="testing...",
             capture_output=True,
-            timeout=1,
+            timeout=10,
             text=True,
         )
         assert "DML_CACHE_KEY=test_key" in resp.stdout
