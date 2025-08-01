@@ -159,30 +159,45 @@ class TestHatchRunner:
 
     def test_hatch_runner_funkify(self):
         """Test HatchRunner.funkify method."""
-        with patch("shutil.which", return_value="/usr/local/bin/hatch"):
-            with patch("dml_util.runners.local.Path"):
-                with patch("dml_util.runners.local.WrappedRunner.funkify") as mock_funkify:
-                    HatchRunner.funkify(
-                        name="test-env",
-                        sub={
-                            "adapter": "test-adapter",
-                            "uri": "test-uri",
-                            "data": {"param": "value"},
-                        },
-                        path="/path/to/project",
-                    )
+        with patch("dml_util.runners.local.WrappedRunner.funkify") as mock_funkify:
+            HatchRunner.funkify(
+                name="test-env",
+                sub={
+                    "adapter": "test-adapter",
+                    "uri": "test-uri",
+                    "data": {"param": "value"},
+                },
+                path="/path/to/project",
+            )
 
-                    # Verify WrappedRunner.funkify was called with a script and sub
-                    args, kwargs = mock_funkify.call_args
-                    script, sub = args
+            # Verify WrappedRunner.funkify was called with a script and sub
+            args, kwargs = mock_funkify.call_args
+            script, sub = args
 
-                    assert "hatch env create test-env" in script
-                    assert "cd /path/to/project" in script
-                    assert sub == {
-                        "adapter": "test-adapter",
-                        "uri": "test-uri",
-                        "data": {"param": "value"},
-                    }
+            assert "hatch env create test-env" in script
+            assert "cd /path/to/project" in script
+            assert sub == {
+                "adapter": "test-adapter",
+                "uri": "test-uri",
+                "data": {"param": "value"},
+            }
+
+    @pytest.mark.skipif(not which("hatch"), reason="hatch command not found")
+    def test_hatch_script_passes_env(self):
+        js = HatchRunner.funkify("pandas", None)
+        resp = subprocess.run(
+            ["bash", "-c", js["script"], "_", "env"],
+            env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo", "PATH": os.environ["PATH"]},
+            input="testing...",
+            capture_output=True,
+            timeout=1,
+            text=True,
+        )
+        assert resp.returncode == 0, f"Script failed: {resp.stderr}"
+        lines = resp.stdout.splitlines()
+        env = {k: v for k, v in (x.split("=", 1) for x in lines) if k.startswith("DML_")}
+        assert env["DML_CACHE_KEY"] == "test_key"
+        assert env["DML_CACHE_PATH"] == "foo"
 
 
 @pytest.mark.usefixtures("adapter_setup")
@@ -211,6 +226,30 @@ class TestCondaRunner:
                     "uri": "test-uri",
                     "data": {"param": "value"},
                 }
+
+    @pytest.mark.skipif(not which("conda"), reason="conda command not found")
+    def test_conda_script_passes_env(self):
+        # list conda envs and skip if "dml-pandas" is not found
+        envs = subprocess.run(
+            ["conda", "env", "list"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        if "dml-pandas" not in envs:
+            pytest.skip("dml-pandas conda environment not found")
+        js = CondaRunner.funkify("dml-pandas", None)
+        resp = subprocess.run(
+            ["bash", "-c", js["script"], "script", "env"],
+            env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo"},
+            input="testing...",
+            check=True,
+            capture_output=True,
+            timeout=10,
+            text=True,
+        )
+        assert "DML_CACHE_KEY=test_key" in resp.stdout
+        assert "DML_CACHE_PATH=foo" in resp.stdout
 
 
 @pytest.mark.skipif(not which("uv"), reason="uv command not found")

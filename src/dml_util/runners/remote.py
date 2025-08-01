@@ -54,6 +54,7 @@ class SshRunner(RunnerBase):
 
     def _run_cmd(self, *user_cmd, **kw):
         cmd = ["ssh", *self.input.kwargs["flags"], self.input.kwargs["host"], *user_cmd]
+        logger.debug("Running SSH command: %r", " ".join(cmd))
         resp = subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
         if resp.returncode != 0:
             msg = f"Ssh(code:{resp.returncode}) {user_cmd}\nSTDOUT\n{resp.stdout}\n\nSTDERR\n{resp.stderr}"
@@ -63,10 +64,10 @@ class SshRunner(RunnerBase):
         return resp.stdout.strip(), stderr
 
     def run(self):
+        # use try cache to guarantee cleanup
         sub_adapter, sub_uri, sub_kwargs = self.input.get_sub()
         tmpf = self.proc_script()
         stdout, stderr = self._run_cmd(tmpf, sub_adapter, sub_uri, input=sub_kwargs)
         # stdout = json.loads(stdout or "{}")
         self._run_cmd("rm", tmpf)
         return stdout, stderr
-

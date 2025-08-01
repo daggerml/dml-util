@@ -7,9 +7,13 @@ using various runners, such as script runners, conda runners, etc.
 
 import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Type, Union
 
 from dml_util.adapters.base import AdapterBase
 from dml_util.core.config import EnvConfig, InputConfig
+
+if TYPE_CHECKING:
+    from dml_util.runners.base import RunnerBase
 
 
 @dataclass
@@ -19,11 +23,11 @@ class LocalAdapter(AdapterBase):
     ADAPTER = "dml-util-local-adapter"
 
     @classmethod
-    def resolve(cls, uri: str) -> str:
+    def resolve(cls, uri: str) -> Type["RunnerBase"]:
         """Resolve a URI to a local runner."""
-        from dml_util.runners.base import RunnerBase
+        from dml_util.runners.base import runners
 
-        return RunnerBase._RUNNERS[uri]
+        return runners[uri]
 
     @classmethod
     def funkify(cls, uri, data):
@@ -34,7 +38,7 @@ class LocalAdapter(AdapterBase):
         return super().funkify(uri, data)
 
     @classmethod
-    def send_to_remote(cls, uri, config: EnvConfig, dump: str) -> tuple[str, str]:
+    def send_to_remote(cls, uri, config: EnvConfig, dump: str) -> tuple[Union[str, None], str]:
         """Send data to a local runner.
 
         Parameters
@@ -48,7 +52,7 @@ class LocalAdapter(AdapterBase):
 
         Returns
         -------
-        tuple[str, str]
+        tuple[str | None, str]
             A tuple of (response, message).
         """
         runner = cls.resolve(uri)(config, InputConfig(**json.loads(dump)))

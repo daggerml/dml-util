@@ -76,13 +76,14 @@ class InputConfig:
     """Path to the cache directory."""
     cache_key: str
     """The execution's cache key."""
-    kwargs: Union[dict, type(None)]
+    kwargs: Union[dict, None]
     """The function's specific data. May include a sub-adapter and URI."""
     dump: str
     """The dag dump, an opaque blob serialized as a string."""
 
     def get_sub(self):
         """Get sub-adapter, URI, and kwargs for the sub function's stdin."""
+        assert isinstance(self.kwargs, dict), "cannot get sub from non-dict kwargs"
         sub = self.kwargs["sub"]
         ks = {
             "cache_path": self.cache_path,

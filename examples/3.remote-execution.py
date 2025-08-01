@@ -75,11 +75,17 @@ if __name__ == "__main__":
     with dml.new("example-on-batch", __doc__) as dag:
         dag.batch = dml.load("batch").result
         dag.ecr = dml.load("ecr").result
-
         image = build_image(dml, dag)
-
         # insert the function into the dag
-        dag.batch_fn = funkify(fn, data={"image": dag.image.value()}, adapter=dag.batch.value())
+        dag.batch_fn = funkify(
+            fn,
+            data={
+                "image": dag.image.value(),
+                "memory": 1024,  # in MiB
+                "cpu": 1,  # number of vCPUs
+            },
+            adapter=dag.batch.value(),
+        )
         # call the function and have it run in batch
         dag.batch_sum = dag.batch_fn(*vals)
         # check the result

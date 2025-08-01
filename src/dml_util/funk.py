@@ -1,15 +1,21 @@
 import logging
 import os
+import re
 from contextlib import contextmanager
 from functools import partial
 from inspect import getsource
+from shutil import which
 from textwrap import dedent
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union, overload
 from urllib.parse import urlparse
 
 import boto3
 from daggerml import Dml, Resource
 
 from dml_util.adapters import AdapterBase
+
+if TYPE_CHECKING:
+    import daggerml.core
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +48,50 @@ def _fnk(fn, extra_fns, extra_lines):
         fn_name=fn.__name__,
         eln="\n".join(extra_lines),
     )
+    src = re.sub(r"\n{3,}", "\n\n", src)
     return src
 
 
+@overload
 def funkify(
-    fn=None,
-    uri="script",
-    data=None,
-    adapter="local",
-    extra_fns=(),
-    extra_lines=(),
-):
+    fn: None = None,
+    *,
+    uri: str = "script",
+    data: Optional[dict] = None,
+    adapter: Union[Resource, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+) -> Callable[[Union[Callable[["daggerml.core.Dag"], Any], Resource]], Resource]: ...
+
+
+@overload
+def funkify(
+    fn: Resource,
+    uri: str = "script",
+    data: Optional[dict] = None,
+    adapter: Union[Resource, str] = "local",
+) -> Resource: ...
+
+
+@overload
+def funkify(
+    fn: Union[Callable[["daggerml.core.Dag"], Any], str],
+    uri: str = "script",
+    data: Optional[dict] = None,
+    adapter: Union[Resource, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+) -> Resource: ...
+
+
+def funkify(
+    fn: Union[None, Callable[["daggerml.core.Dag"], Any], Resource, str] = None,
+    uri: str = "script",
+    data: Optional[dict] = None,
+    adapter: Union[Resource, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+) -> Union[Resource, Callable[[Callable[["daggerml.core.Dag"], Any]], Resource]]:
     """
     Decorator to funkify a function into a DML Resource.
 
@@ -106,10 +145,14 @@ def funkify(
             extra_lines=extra_lines,
         )
     if isinstance(adapter, Resource):
+        assert isinstance(fn, Resource), "Adapter must be a Resource if fn is a Resource"
         return Resource(adapter.uri, data={"sub": fn, **(data or {})}, adapter=adapter.adapter)
     adapter_ = AdapterBase.ADAPTERS.get(adapter)
     if adapter_ is None:
-        raise ValueError(f"Adapter: {adapter!r} does not exist")
+        adapter_ = which(adapter)
+        if adapter_ is None:
+            raise ValueError(f"Adapter: {adapter!r} does not exist")
+        return Resource(uri=uri, data=data, adapter=adapter_)
     data = data or {}
     if isinstance(fn, Resource):
         data = {"sub": fn, **data}

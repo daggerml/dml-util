@@ -9,13 +9,13 @@ from io import BytesIO
 from itertools import groupby
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Union
+from typing import Sequence, Union, overload
 from urllib.parse import urlparse
 
 import boto3
+from daggerml import Node, Resource
 
 from dml_util.aws import get_client
-from dml_util.core.daggerml import Node, Resource
 from dml_util.core.utils import batched, compute_hash, exactly_one, js_dump
 
 logger = logging.getLogger(__name__)
@@ -203,10 +203,21 @@ class S3Store:
             self.client.download_file(p.netloc, p.path[1:], tmpf.name)
             subprocess.run(["tar", "-xvf", tmpf.name, "-C", dest], check=True)
 
-    def rm(self, *name_or_uris: Union[str, Resource, list[Union[str, Resource]]]):
+    @overload
+    def rm(self, name_or_uri: Sequence[Union[str, Resource, Node]]) -> None:
+        """Remove objects from S3."""
+        ...
+
+    @overload
+    def rm(self, *name_or_uri: Union[str, Resource, Node]) -> None:
+        """Remove objects from S3."""
+        ...
+
+    def rm(self, *name_or_uris: Union[str, Resource, Node, Sequence[Union[str, Resource, Node]]]) -> None:
         """Remove objects from S3."""
         if len(name_or_uris) == 1 and isinstance(name_or_uris[0], (list, tuple)):
-            name_or_uris = name_or_uris[0]
+            name_or_uris = tuple(name_or_uris[0])
+        assert not any(isinstance(x, (tuple, list)) for x in name_or_uris), "rm does not support nested lists or tuples"
         if len(name_or_uris) == 0:
             return
         for bucket, objs in groupby(map(self.parse_uri, sorted(name_or_uris)), key=lambda x: x[0]):

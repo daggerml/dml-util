@@ -1,6 +1,6 @@
 """Unit tests for the DynamoState module."""
 
-from time import sleep
+from time import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +21,8 @@ class TestDynamoState:
         self.table_name = "test-job"
         self.table_arn = f"arn:aws:dynamodb:us-east-1:123456789012:table/{self.table_name}"
         self.cache_key = "test-key"
+        with patch.dict("os.environ", {"DYNAMODB_TABLE": self.table_name}):
+            yield
 
     def test_dynamostate_initialization(self):
         """Test DynamoState initialization.
@@ -74,16 +76,23 @@ class TestDynamoState:
 
     @pytest.mark.usefixtures("dynamodb_table")
     def test_dynamo_locking(self):
-        timeout = 0.05
+        t0 = [time()]
+        timeout = 0.25
         db0 = DynamoState("test-key", timeout=timeout)
         db1 = DynamoState("test-key", timeout=timeout)
-        assert db0.get() == {}
-        assert db1.get() is None
-        assert db1.put({"asdf": 23}) is False
-        assert db0.put({"q": "b"}) is True
-        # relocking works
-        sleep(timeout * 2)
-        assert db1.get() == {"q": "b"}
-        assert db0.unlock() is False
-        assert db1.unlock() is True
+        with patch("dml_util.aws.dynamodb.time", lambda: t0[0]):
+            assert db0.get() == {}
+            t0[0] += 0.01
+            assert db1.get() is None
+            t0[0] += 0.01
+            assert db1.put({"asdf": 23}) is False
+            t0[0] += 0.01
+            assert db0.put({"q": "b"}) is True
+            t0[0] += 0.01
+            t0[0] += timeout
+            assert db1.get() == {"q": "b"}
+            t0[0] += 0.01
+            assert db0.unlock() is False
+            t0[0] += 0.01
+            assert db1.unlock() is True
         db1.delete()

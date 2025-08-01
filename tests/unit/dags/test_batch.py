@@ -1,299 +1,130 @@
-"""Integration tests for the BatchRunner runner with local execution."""
-
-import json
 import os
-import uuid
-from dataclasses import dataclass, field
-from io import StringIO
-from unittest.mock import patch
+from itertools import product
+from unittest.mock import MagicMock, call, patch
 
 import pytest
+from daggerml import Error
 
-from dml_util.adapters import LambdaAdapter
-from dml_util.core.config import EnvConfig
-from dml_util.runners.batch import BatchRunner
-from tests.util import Config
+from dml_util.aws import get_client
+from dml_util.core.config import EnvConfig, InputConfig
+from dml_util.runners.batch import FAILED_STATE, PENDING_STATES, SUCCESS_STATE, BatchRunner
 
-
-class IO(StringIO):
-    def read(self):
-        val = self.getvalue().strip()
-        self.truncate(0)
-        self.seek(0)
-        return val
-
-
-@dataclass
-class LocalBatchClient:
-    """Mock AWS Batch client that runs jobs locally."""
-    job_definitions: dict = field(default_factory=dict)
-    jobs: dict = field(default_factory=dict)
-    running_jobs: set = field(default_factory=set)
-
-    def register_job_definition(self, **kwargs):
-        job_def_id = str(uuid.uuid4())
-        job_def_arn = f"arn:aws:batch:us-east-1:123456789012:job-definition/{kwargs['jobDefinitionName']}-{job_def_id}"
-        self.job_definitions[job_def_arn] = kwargs
-        return {"jobDefinitionArn": job_def_arn}
-
-    def submit_job(self, **kwargs):
-        job_id = f"job-{str(uuid.uuid4())}"
-        self.jobs[job_id] = {
-            "jobId": job_id,
-            "status": "SUBMITTED",
-            "jobDefinition": kwargs["jobDefinition"],
-            "jobName": kwargs["jobName"],
-            "jobQueue": kwargs["jobQueue"],
-            "container": {"exitCode": None},
-        }
-        self.running_jobs.add(job_id)
-        return {"jobId": job_id}
-
-    def describe_jobs(self, jobs):
-        result = {"jobs": []}
-        for job_id in jobs:
-            if job_id in self.jobs:
-                # If the job was added to running_jobs but hasn't been updated yet, mark as RUNNING
-                if job_id in self.running_jobs:
-                    self.jobs[job_id]["status"] = "RUNNING"
-                result["jobs"].append(self.jobs[job_id])
-        return result
-
-    def update_job_status(self, job_id, status, exit_code=0):
-        """Helper method to update job status for testing."""
-        if job_id in self.jobs:
-            self.jobs[job_id]["status"] = status
-            self.jobs[job_id]["container"]["exitCode"] = exit_code
-            if status in ("SUCCEEDED", "FAILED"):
-                self.running_jobs.discard(job_id)
-
-    def cancel_job(self, jobId, **kwargs):
-        """Cancel a job."""
-        if jobId in self.jobs:
-            self.jobs[jobId]["status"] = "CANCELLED"
-            self.running_jobs.discard(jobId)
-
-    def deregister_job_definition(self, jobDefinition):
-        """Deregister a job definition."""
-        if jobDefinition in self.job_definitions:
-            del self.job_definitions[jobDefinition]
-
-
-def lambda_mock(fn):
-    """Create a mock for Lambda invocations."""
-    def inner(Payload, **kw):
-        event = json.loads(Payload)
-        context = kw
-        return {"Payload": Config(read=lambda: json.dumps(fn(event, context)))}
-    # return a mock with a `invoke` method
-    inner.invoke = lambda Payload, **kw: inner(Payload, **kw)
-    return inner
+MEM_MAX = 151
 
 
 @pytest.fixture(autouse=True)
-def batch_env(dynamodb_table):
-    """Fixture to set up environment variables for testing."""
-    env_vars = {
-        "CPU_QUEUE": "foo",
-        "GPU_QUEUE": "bar",
-        "BATCH_TASK_ROLE_ARN": "arn:aws:iam::123456789012:role/BatchTaskRole",
-    }
-    with patch.dict(os.environ, env_vars):
+def add_envvars():
+    with patch.dict(os.environ):
+        os.environ.update(
+            {"CPU_QUEUE": "cpu-q", "GPU_QUEUE": "gpu-q", "BATCH_TASK_ROLE_ARN": "arn", "DYNAMODB_TABLE": "test-job"}
+        )
         yield
 
 
 @pytest.fixture
-def mock_batch_client():
-    """Create a mock AWS Batch client."""
-    return LocalBatchClient()
-
-
-@pytest.mark.usefixtures("dynamodb_table", "s3_bucket", "adapter_setup")
-@patch("time.sleep", lambda _: None)
-@patch("dml_util.runners.batch.BatchRunner.submit")
-def test_local_batch_execution(mock_submit, mock_batch_client):
-    """Test Batch runner execution with local batch client."""
-    # Prepare test data
-    data = {
-        "cache_key": "foo:key",
-        "cache_path": "bar",
-        "kwargs": {
-            "sub": {"uri": "bar", "data": {}, "adapter": "baz"},
-            "image": {"uri": "foo:uri"},
-        },
-        "dump": "opaque",
-    }
-
-    conf = Config(
-        uri="asdf:uri",
-        input=Config(read=lambda: json.dumps(data)),
-        output=IO(),
-        error=IO(),
-        n_iters=1,
+def batch_runner():
+    runner = BatchRunner(
+        EnvConfig.from_env(debug=True),
+        InputConfig(
+            cache_path="/dev/null",
+            cache_key="test-key",
+            kwargs={
+                "spec": {"resourceRequirements": [{"type": "MEMORY", "value": 100}]},
+                "image": {"uri": "test-image"},
+                "memory_max": MEM_MAX,
+                "sub": {
+                    "adapter": "adapter",
+                    "uri": "uri",
+                    "data": {"foo": "bar"},
+                },
+            },
+            dump="{}",
+        ),
     )
-
-    # Set up mock_submit to return a job state
-    job_id = "job-" + str(uuid.uuid4())
-    job_def = "arn:aws:batch:us-east-1:123456789012:job-definition/test-job-def"
-    mock_submit.return_value = {"job_def": job_def, "job_id": job_id}
-
-    # Mock the AWS Batch and Lambda clients
-    with patch.object(BatchRunner, "client", mock_batch_client), \
-         patch("dml_util.adapters.lambda_.get_client", return_value=lambda_mock(BatchRunner.handler)):
-        mock_batch_client.jobs[job_id] = {
-            "jobId": job_id,
-            "status": "SUBMITTED",
-            "jobDefinition": job_def,
-            "jobName": f"fn-{data['cache_key']}",
-            "jobQueue": "cpu-queue",
-            "container": {"exitCode": None},
-        }
-        mock_batch_client.running_jobs.add(job_id)
-
-        # Test job submission
-        status = LambdaAdapter.cli(conf)
-        assert status == 0
-
-        # Get the job_id from error output
-        error_output = conf.error.read()
-        assert "submitted" in error_output
-
-        # Test job in progress
-        status = LambdaAdapter.cli(conf)
-        assert status == 0
-        assert "RUNNING" in conf.error.read()
-
-        # Prepare job output
-        bc = BatchRunner(EnvConfig.from_env(), data)
-        bc.s3.put(b"opaque-result", uri=bc.output_loc)
-
-        # Test job completion
-        mock_batch_client.update_job_status(job_id, "SUCCEEDED")
-        status = LambdaAdapter.cli(conf)
-        assert status == 0
-        assert "SUCCEEDED" in conf.error.read()
-        assert conf.output.read() == "opaque-result"
+    runner._client = get_client("batch")
+    runner._client = MagicMock(auto_spec=True)
+    _s3 = runner.s3
+    runner.s3 = MagicMock(auto_spec=True)
+    runner.s3.bucket = _s3.bucket
+    runner.s3.prefix = _s3.prefix
+    runner.s3._name2uri = _s3._name2uri
+    return runner
 
 
-@pytest.mark.usefixtures("dynamodb_table", "s3_bucket", "adapter_setup")
-@patch("time.sleep", lambda _: None)
-@patch("dml_util.runners.batch.BatchRunner.submit")
-def test_local_batch_failed_job(mock_submit, mock_batch_client):
-    """Test Batch runner with a failed job."""
-    # Prepare test data
-    data = {
-        "cache_key": "foo:key",
-        "cache_path": "bar",
-        "kwargs": {
-            "sub": {"uri": "bar", "data": {}, "adapter": "baz"},
-            "image": {"uri": "foo:uri"},
-        },
-        "dump": "opaque",
+def test_update_no_state(batch_runner):
+    job_id, job_def = "job-123", "arn:job-def"
+    batch_runner._client.register_job_definition.return_value = {"jobDefinitionArn": job_def}
+    batch_runner._client.submit_job.return_value = {"jobId": job_id}
+    state, msg, dump = batch_runner.update({})
+    assert not dump
+    assert state == {"job_id": job_id, "job_def": job_def}
+    assert "submitted" in msg
+    batch_runner._client.register_job_definition.assert_called_once()
+    batch_runner._client.submit_job.assert_called_once()
+    _, kw = batch_runner._client.submit_job.call_args
+    assert kw["jobDefinition"] == job_def
+    # job queue is cpu-q
+    assert kw["jobQueue"] == "cpu-q"
+
+
+@pytest.mark.parametrize("status", PENDING_STATES)
+def test_update_pending_states(batch_runner, status):
+    job_id, job_def = "job-123", "arn:job-def"
+    state = {"job_id": job_id, "job_def": job_def}
+    batch_runner._client.describe_jobs.return_value = {
+        "jobs": [{"jobId": job_id, "status": status, "attempts": [{"container": {"exitCode": 0}}]}]
     }
-
-    conf = Config(
-        uri="asdf:uri",
-        input=Config(read=lambda: json.dumps(data)),
-        output=IO(),
-        error=IO(),
-        n_iters=1,
-    )
-
-    # Set up mock_submit to return a job state
-    job_id = "job-" + str(uuid.uuid4())
-    job_def = "arn:aws:batch:us-east-1:123456789012:job-definition/test-job-def"
-    mock_submit.return_value = {"job_def": job_def, "job_id": job_id}
-
-    # Mock the AWS BatchRunner and Lambda clients
-    with patch.object(BatchRunner, "client", mock_batch_client), \
-         patch("dml_util.adapters.lambda_.get_client", return_value=lambda_mock(BatchRunner.handler)):
-        # Add the job to the mock batch client
-        mock_batch_client.jobs[job_id] = {
-            "jobId": job_id,
-            "status": "SUBMITTED",
-            "jobDefinition": job_def,
-            "jobName": f"fn-{data['cache_key']}",
-            "jobQueue": "cpu-queue",
-            "container": {"exitCode": None},
-        }
-        mock_batch_client.running_jobs.add(job_id)
-
-        # Test job submission
-        status = LambdaAdapter.cli(conf)
-        assert status == 0
-
-        # Get the job_id from error output
-        conf.error.read()
-
-        # Test job failure
-        mock_batch_client.update_job_status(job_id, "FAILED", exit_code=1)
-
-        # Write error message to S3
-        bc = BatchRunner(EnvConfig.from_env(), data)
-        bc.s3.put(b"Job failed with error", name="error.dump")
-
-        # Test job completion - should raise an exception due to failure
-        resp = LambdaAdapter.cli(conf)
-        assert resp == 1
-        err = conf.error.read()
-        assert err.startswith("lambda returned with bad status: 400")
-        assert "FAILED" in err
+    new_state, msg, dump = batch_runner.update(state.copy())
+    assert new_state == state
+    assert not dump
+    assert status in msg
+    batch_runner._client.describe_jobs.assert_called_once()
+    assert not batch_runner._client.register_job_definition.called
+    assert not batch_runner._client.submit_job.called
 
 
-@pytest.mark.usefixtures("dynamodb_table", "s3_bucket", "adapter_setup")
-@patch("time.sleep", lambda _: None)
-@patch("dml_util.runners.batch.BatchRunner.submit")
-def test_local_batch_no_output(mock_submit, mock_batch_client):
-    """Test Batch runner with a job that completes but has no output."""
-    # Prepare test data
-    data = {
-        "cache_key": "foo:key",
-        "cache_path": "bar",
-        "kwargs": {
-            "sub": {"uri": "bar", "data": {}, "adapter": "baz"},
-            "image": {"uri": "foo:uri"},
-        },
-        "dump": "opaque",
+@pytest.mark.parametrize("exit_code,has_err,has_out", product([0, 1, 53], [True, False], [True, False]))
+def test_update_finished(batch_runner, exit_code, has_err, has_out):
+    # mock the s3store (batch_runner.s3) "exists" function with another that returns True iff has_[x]
+    state = {"job_id": "foo", "job_def": "bar"}
+
+    def s3_exists(name):
+        return (has_err and name == "error.dump") or (has_out and name == "output.dump")
+
+    desc = {
+        "jobId": state["job_id"],
+        "status": SUCCESS_STATE if exit_code == 0 else FAILED_STATE,
+        "attempts": [{"container": {"exitCode": exit_code, "memory": "100"}}],
     }
+    batch_runner.s3.exists = s3_exists
+    batch_runner.s3.get.return_value = b"testing"
+    batch_runner._client.describe_jobs.return_value = {"jobs": [desc]}
+    if exit_code == 0 and has_out:
+        new_state, msg, dump = batch_runner.update(state.copy())
+        assert new_state is None
+        assert SUCCESS_STATE in msg
+        assert dump
+    else:
+        with pytest.raises(Error) as excinfo:
+            batch_runner.update(state.copy())
+        if exit_code == 0:
+            assert "no output" in str(excinfo.value)
+        assert excinfo.value.type == f"exit:{exit_code}"
+        assert excinfo.value.origin == "aws-batch"
+        assert not batch_runner._client.submit_job.called
+    assert not batch_runner._client.register_job_definition.called
 
-    conf = Config(
-        uri="asdf:uri",
-        input=Config(read=lambda: json.dumps(data)),
-        output=IO(),
-        error=IO(),
-        n_iters=1,
-    )
 
-    # Set up mock_submit to return a job state
-    job_id = "job-" + str(uuid.uuid4())
-    job_def = "arn:aws:batch:us-east-1:123456789012:job-definition/test-job-def"
-    mock_submit.return_value = {"job_def": job_def, "job_id": job_id}
-    # Mock the AWS BatchRunner and Lambda clients
-    with patch.object(BatchRunner, "client", mock_batch_client), \
-         patch("dml_util.adapters.lambda_.get_client", return_value=lambda_mock(BatchRunner.handler)):
-        mock_batch_client.jobs[job_id] = {
-            "jobId": job_id,
-            "status": "SUBMITTED",
-            "jobDefinition": job_def,
-            "jobName": f"fn-{data['cache_key']}",
-            "jobQueue": "cpu-queue",
-            "container": {"exitCode": None},
-        }
-        mock_batch_client.running_jobs.add(job_id)
+def test_gc(batch_runner):
+    # mock the s3store (batch_runner.s3) "exists" function with another that returns True iff has_[x]
+    state = {"job_id": "foo", "job_def": "bar"}
 
-        # Test job submission
-        status = LambdaAdapter.cli(conf)
-        assert status == 0
-
-        # Get the job_id from error output
-        conf.error.read()
-
-        # Set job as succeeded but don't write output
-        mock_batch_client.update_job_status(job_id, "SUCCEEDED")
-
-        # Should fail due to missing output
-        assert LambdaAdapter.cli(conf) == 1
-
-        error_msg = conf.error.read()
-        assert "SUCCEEDED" in error_msg
-        assert "no output" in error_msg
+    vals = list("abc")
+    batch_runner.s3.ls.return_value = vals
+    batch_runner._client.describe_jobs.return_value = {"jobs": [{"jobId": state["job_id"], "status": FAILED_STATE}]}
+    batch_runner.gc(state)
+    assert not batch_runner._client.register_job_definition.called
+    assert not batch_runner._client.submit_job.called
+    batch_runner._client.deregister_job_definition.assert_called_once()
+    batch_runner.s3.rm.assert_called_once()
+    assert batch_runner.s3.rm.call_args_list == [call(*vals)]

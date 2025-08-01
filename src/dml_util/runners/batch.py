@@ -6,11 +6,13 @@ Environment variables:
 - GPU_QUEUE: The name of the GPU job queue.
 - BATCH_TASK_ROLE_ARN: The ARN of the IAM role for Batch tasks.
 """
+
 import logging
 import os
 from typing import TYPE_CHECKING, Optional
 
 from botocore.exceptions import ClientError
+from daggerml import Error
 
 from dml_util.aws import get_client
 from dml_util.runners.lambda_ import LambdaRunner
@@ -19,11 +21,12 @@ if TYPE_CHECKING:
     import boto3
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-DFLT_PROP = {"vcpus": 1, "memory": 512}
 PENDING_STATES = ["SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"]
 SUCCESS_STATE = "SUCCEEDED"
 FAILED_STATE = "FAILED"
+DEFAULT_VCPU = 1
+DEFAULT_MEMORY = 10 * 1024  # in MiB, (10 GB)
+DEFAULT_GPU = 0
 
 
 class BatchRunner(LambdaRunner):
@@ -36,14 +39,21 @@ class BatchRunner(LambdaRunner):
             self._client = get_client("batch")
         return self._client
 
-    def submit(self):
-        sub_adapter, sub_uri, sub_kwargs = self.input.get_sub()
+    def proc_kw(self):
         kw = self.input.kwargs.copy()
-        kw.pop("sub")
-        image = kw.pop("image")["uri"]
-        container_props = DFLT_PROP
-        container_props.update(kw)
-        needs_gpu = any(x["type"] == "GPU" for x in container_props.get("resourceRequirements", []))
+        resource_reqs = [
+            {"type": "MEMORY", "value": str(kw.get("memory", DEFAULT_MEMORY))},
+            {"type": "VCPU", "value": str(kw.get("cpu", DEFAULT_VCPU))},
+        ]
+        job_queue = "CPU_QUEUE"
+        if kw.get("gpu", DEFAULT_GPU) > 0:
+            job_queue = "GPU_QUEUE"
+            resource_reqs.append({"type": "GPU", "value": str(kw["gpu"])})
+        job_queue = os.environ[job_queue]
+        return kw["image"]["uri"], resource_reqs, job_queue
+
+    def register(self, image, reqs):
+        sub_adapter, sub_uri, sub_kwargs = self.input.get_sub()
         logger.info("createing job definition with name: %r", f"fn-{self.input.cache_key}")
         response = self.client.register_job_definition(
             jobDefinitionName=f"fn-{self.input.cache_key}",
@@ -66,19 +76,32 @@ class BatchRunner(LambdaRunner):
                     *[{"name": k, "value": v} for k, v in self.config.to_envvars().items()],
                 ],
                 "jobRoleArn": os.environ["BATCH_TASK_ROLE_ARN"],
-                **container_props,
+                "resourceRequirements": reqs,
             },
         )
         job_def = response["jobDefinitionArn"]
         logger.info("created job definition with arn: %r", job_def)
+        return job_def
+
+    def submit(self, job_def, job_queue):
+        logger.info("job queue: %r", job_queue)
         response = self.client.submit_job(
             jobName=f"fn-{self.input.cache_key}",
-            jobQueue=os.environ["GPU_QUEUE" if needs_gpu else "CPU_QUEUE"],
+            jobQueue=job_queue,
             jobDefinition=job_def,
+            retryStrategy={
+                "attempts": 3,
+                "evaluateOnExit": [
+                    # {"onExitCode": "137", "action": "EXIT"},  # OOM
+                    {"onReason": "Host EC2*", "action": "RETRY"},
+                    {"onStatusReason": "ResourceInitialization*", "action": "RETRY"},
+                    {"onReason": "*", "action": "EXIT"},
+                ],
+            },
         )
         logger.info("Job submitted: %r", response["jobId"])
         job_id = response["jobId"]
-        return {"job_def": job_def, "job_id": job_id}
+        return job_id
 
     def describe_job(self, state):
         job_id = state["job_id"]
@@ -96,37 +119,41 @@ class BatchRunner(LambdaRunner):
         status = job["status"]
         return job_id, status
 
+    def get_error_info(self):
+        last_attempt = self.job_desc.get("attempts", [{}])[-1].get("container", {})
+        return last_attempt.get("exitCode", 1), last_attempt.get("reason", "Unknown error")
+
     def update(self, state):
         if state == {}:
-            state = self.submit()
-            job_id = state["job_id"]
+            image, reqs, job_queue = self.proc_kw()
+            job_def = self.register(image, reqs)
+            job_id = self.submit(job_def, job_queue)
+            state = {"job_def": job_def, "job_id": job_id}
             return state, f"{job_id = } submitted", {}
         job_id, status = self.describe_job(state)
         msg = f"{job_id = } {status}"
         logger.info(msg)
         if status in PENDING_STATES:
             return state, msg, {}
-        if self.s3.exists("error.dump"):
-            err = self.s3.get("error.dump").decode()
-            logger.info("%r found with content: %r", self.s3._name2uri("error.dump"), err)
-            msg += f"\n\n{err}"
         if status == SUCCESS_STATE and self.s3.exists("output.dump"):
             logger.info("job finished successfully and output was written...")
             js = self.s3.get("output.dump").decode()
             logger.info("dump = %r", js)
             return None, msg, js
-        if not self.s3.exists("output.dump"):
-            msg = f"{msg} (no output found)"
-        logger.info("file: %r does not exist", self.s3._name2uri("output.dump"))
-        if "statusReason" in self.job_desc:
-            msg = f"{msg} (reason: {self.job_desc['statusReason']})"
-        logger.info(msg)
-        raise RuntimeError(f"{msg = }")
+        if status == SUCCESS_STATE:
+            exit_code, exit_reason = 0, "Job completed successfully but no output was written."
+        else:
+            exit_code, exit_reason = self.get_error_info()
+        if self.s3.exists("error.dump"):
+            logger.info("error file found with content: %r", self.s3.get("error.dump").decode())
+        if self.s3.exists("output.dump"):
+            logger.info("output file found with content: %r", self.s3.get("output.dump").decode())
+        raise Error(exit_reason, origin="aws-batch", type=f"exit:{exit_code}")
 
     def gc(self, state):
         super().gc(state)
         if state:
-            job_id, status = self.describe_job(state)
+            job_id, _ = self.describe_job(state)
             try:
                 self.client.cancel_job(jobId=job_id, reason="gc")
             except ClientError:
