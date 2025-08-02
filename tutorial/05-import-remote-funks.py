@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+__doc__ = """
 # Example importing a remote batch function and executing it in parallel
 
 Note that the details of how `batch_fn` is implemented are not important here.
@@ -13,7 +13,6 @@ zero. This is intentional, and shows how you can catch and persist errors.
 from concurrent.futures import ThreadPoolExecutor
 
 from daggerml import Dml, Error
-
 
 if __name__ == "__main__":
     dml = Dml()

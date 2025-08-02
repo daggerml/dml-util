@@ -36,7 +36,7 @@ try:
                 super().__init__(*args, boto3_client=boto3_client, **kwargs)
                 self._enabled = True
             except Exception as e:
-                logger.warning(f"CloudWatch logging disabled: {e}")
+                logger.info(f"CloudWatch logging disabled: {e}")
 
         def emit(self, record):
             if not self._enabled:
@@ -134,8 +134,14 @@ class AdapterBase:
         if watchtower:
             # get region from boto3
             try:
+                logs_client = get_client("logs")
+                logs_client.describe_log_streams(logGroupName=config.log_group, logStreamNamePrefix="/adapter", limit=1)
+            except Exception as perm_err:
+                logger.info(f"CloudWatch logging not enabled due to AWS access error: {perm_err}")
+            else:
                 handler = SafeCloudWatchLogHandler(
                     log_group_name=config.log_group,
+                    boto3_client=logs_client,
                     log_stream_name="/adapter",
                     create_log_stream=True,
                     create_log_group=False,
@@ -145,8 +151,6 @@ class AdapterBase:
                     logging.getLogger("dml_util").addHandler(handler)
                     logging.getLogger("").addHandler(handler)
                     logger.debug("added watchtower handler %r", handler)
-            except Exception as e:
-                logger.error("Error setting up watchtower handler: %s", e)
 
     @staticmethod
     def _teardown():
