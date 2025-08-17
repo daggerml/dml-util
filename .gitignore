@@ -1,5 +1,6 @@
 # daggerml
 .dml/
+uv.lock
 # scm writes version info now...
 __about__.py
 # jupytext .py to .ipynb ignore
