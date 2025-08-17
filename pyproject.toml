@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dml = [
-  "daggerml-cli>=0.0.35",
+  "daggerml-cli>=0.0.36",
   "watchtower",
 ]
 nb = [

@@ -85,7 +85,7 @@ def get_client(name, region=None, default_region="us-east-1"):
     if not region:
         try:
             region = boto3.Session().region_name
-        except (BotoCoreError, NoRegionError):
+        except (BotoCoreError, NoRegionError, ConnectionRefusedError):
             logger.debug("could not instantiate boto client...")
             pass
     # Step 4: Metadata if still no region

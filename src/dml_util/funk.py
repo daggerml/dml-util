@@ -250,3 +250,4 @@ def aws_fndag():
                 yield dag
         except Exception:
             logger.exception("AWS function failed with exception.")
+            raise
