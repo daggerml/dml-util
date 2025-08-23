@@ -50,15 +50,14 @@ class ScriptRunner(RunnerBase):
         # TODO: update logging to include message
         # TODO: remove stderr printing unless debug or error
         pid = state.get("pid")
-        response = None
         if pid is None:
             pid, tmpd = self.submit()
             logger.info(f"Process {pid} started in {tmpd}")
-            return {"pid": pid, "tmpd": tmpd}, f"{pid = } started", response
+            return {"pid": pid, "tmpd": tmpd}, f"{pid = } started", None
         tmpd = state["tmpd"]
         if proc_exists(pid):
             logger.debug(f"Process {pid} is still running")
-            return state, f"{pid = } running", response
+            return state, f"{pid = } running", None
         logger.info(f"Process {pid} finished, checking output")
         dump = if_read_file(f"{tmpd}/output.dump")
         if dump:
