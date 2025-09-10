@@ -27,12 +27,12 @@ classifiers = [
 ]
 dependencies = [
   "boto3",
-  "daggerml>=0.0.36",
+  "daggerml>=0.0.38",
 ]
 
 [project.optional-dependencies]
 dml = [
-  "daggerml-cli>=0.0.36",
+  "daggerml-cli>=0.0.38",
   "watchtower",
 ]
 nb = [
