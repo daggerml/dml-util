@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Union
 from urllib.parse import urlparse
 
-from daggerml import Error, Resource
+from daggerml import Error, Executable
 from daggerml.core import to_json
 
 from dml_util.aws import get_client
@@ -231,8 +231,8 @@ class AdapterBase:
             cls._teardown()
 
     @classmethod
-    def funkify(cls, uri, data):
-        return Resource(uri, data=data, adapter=cls.ADAPTER)
+    def funkify(cls, uri, data, prepop=None):
+        return Executable(uri, data=data, adapter=cls.ADAPTER, prepop=prepop or {})
 
     @classmethod
     def send_to_remote(cls, uri: str, config: EnvConfig, dump: str) -> tuple[Union[str, None], str]:

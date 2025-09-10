@@ -9,6 +9,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Type, Union
 
+from daggerml import Executable
+
 from dml_util.adapters.base import AdapterBase
 from dml_util.core.config import EnvConfig, InputConfig
 
@@ -30,12 +32,12 @@ class LocalAdapter(AdapterBase):
         return runners[uri]
 
     @classmethod
-    def funkify(cls, uri, data):
-        """Create a Resource from a URI and data."""
+    def funkify(cls, uri, data, prepop=None) -> Executable:
+        """Create an Executable from a URI, data, and prepop."""
         data = cls.resolve(uri).funkify(**data)
         if isinstance(data, tuple):
             uri, data = data
-        return super().funkify(uri, data)
+        return super().funkify(uri, data, prepop=prepop or {})
 
     @classmethod
     def send_to_remote(cls, uri, config: EnvConfig, dump: str) -> tuple[Union[str, None], str]:

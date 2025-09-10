@@ -6,11 +6,11 @@ from functools import partial
 from inspect import getsource
 from shutil import which
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union, overload
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Sequence, Union, overload
 from urllib.parse import urlparse
 
 import boto3
-from daggerml import Dml, Resource
+from daggerml import Dml, Executable
 
 from dml_util.adapters import AdapterBase
 
@@ -39,8 +39,8 @@ def _fnk(fn, extra_fns, extra_lines):
         if __name__ == "__main__":
             with aws_fndag() as dag:
                 res = {fn_name}(dag)
-                if dag._ref is None:
-                    dag.result = res
+                if dag.ref is None:
+                    dag.commit(res)
         """
     ).strip()
     src = tpl.format(
@@ -58,19 +58,22 @@ def funkify(
     *,
     uri: str = "script",
     data: Optional[dict] = None,
-    adapter: Union[Resource, str] = "local",
+    adapter: Union[Executable, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
-) -> Callable[[Union[Callable[["daggerml.core.Dag"], Any], Resource]], Resource]: ...
+    prepop: Optional[Dict[str, Any]] = None,
+) -> Callable[[Union[Callable[["daggerml.core.Dag"], Any], Executable]], Executable]: ...
 
 
 @overload
 def funkify(
-    fn: Resource,
+    fn: Executable,
     uri: str = "script",
     data: Optional[dict] = None,
-    adapter: Union[Resource, str] = "local",
-) -> Resource: ...
+    adapter: Union[Executable, str] = "local",
+    *,
+    prepop: Optional[Dict[str, Any]] = None,
+) -> Executable: ...
 
 
 @overload
@@ -78,32 +81,34 @@ def funkify(
     fn: Union[Callable[["daggerml.core.Dag"], Any], str],
     uri: str = "script",
     data: Optional[dict] = None,
-    adapter: Union[Resource, str] = "local",
+    adapter: Union[Executable, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
-) -> Resource: ...
+    prepop: Optional[Dict[str, Any]] = None,
+) -> Executable: ...
 
 
 def funkify(
-    fn: Union[None, Callable[["daggerml.core.Dag"], Any], Resource, str] = None,
+    fn: Union[None, Callable[["daggerml.core.Dag"], Any], Executable, str] = None,
     uri: str = "script",
     data: Optional[dict] = None,
-    adapter: Union[Resource, str] = "local",
+    adapter: Union[Executable, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
-) -> Union[Resource, Callable[[Callable[["daggerml.core.Dag"], Any]], Resource]]:
+    prepop: Optional[Dict[str, Any]] = None,
+) -> Union[Executable, Callable[[Callable[["daggerml.core.Dag"], Any]], Executable]]:
     """
-    Decorator to funkify a function into a DML Resource.
+    Decorator to funkify a function into a DML Executable.
 
     Parameters
     ----------
-    fn : callable, Resource, optional
+    fn : callable, Executable, optional
         The function to funkify.
     uri : str, optional
         The URI for the resource. Defaults to "script".
     data : dict, optional
         Additional data to include in the resource. Defaults to None.
-    adapter : str | Resource, optional
+    adapter : str | Executable, optional
         The adapter to use for the resource. Defaults to "local".
     extra_fns : tuple, optional
         Additional functions to include in the script. Defaults to an empty tuple.
@@ -112,8 +117,8 @@ def funkify(
 
     Returns
     -------
-    Resource
-        A DML Resource representing the funkified function.
+    Executable
+        A DML Executable representing the funkified function.
 
     Notes
     -----
@@ -123,7 +128,7 @@ def funkify(
     --------
     >>> @funkify
     ... def my_function(dag):
-    ...     dag.result = "Hello, DML!"
+    ...     dag.commit("Hello, DML!")
 
     They're composable so you can stack them:
     >>> @funkify(uri="docker", data={"image": "my-python:3.8"})
@@ -143,25 +148,27 @@ def funkify(
             adapter=adapter,
             extra_fns=extra_fns,
             extra_lines=extra_lines,
+            prepop=prepop,
         )
-    if isinstance(adapter, Resource):
-        assert isinstance(fn, Resource), "Adapter must be a Resource if fn is a Resource"
-        return Resource(adapter.uri, data={"sub": fn, **(data or {})}, adapter=adapter.adapter)
+    data = data or {}
+    prepop = prepop or {}
+    if isinstance(adapter, Executable):
+        assert isinstance(fn, Executable), "Adapter must be a Executable if fn is a Executable"
+        return Executable(adapter.uri, data={"sub": fn, **data}, adapter=adapter.adapter, prepop=prepop)
     adapter_ = AdapterBase.ADAPTERS.get(adapter)
     if adapter_ is None:
         adapter_ = which(adapter)
         if adapter_ is None:
             raise ValueError(f"Adapter: {adapter!r} does not exist")
-        return Resource(uri=uri, data=data, adapter=adapter_)
-    data = data or {}
-    if isinstance(fn, Resource):
+        return Executable(uri=uri, data=data, adapter=adapter_, prepop=prepop)
+    if isinstance(fn, Executable):
         data = {"sub": fn, **data}
     elif isinstance(fn, str):
         data = {"script": fn, **data}
     else:
         src = _fnk(fn, extra_fns, extra_lines)
         data = {"script": src, **data}
-    resource = adapter_.funkify(uri, data=data)
+    resource = adapter_.funkify(uri, data=data, prepop=prepop)
     object.__setattr__(resource, "fn", fn)
     return resource
 
@@ -175,7 +182,7 @@ def dkr_build(dag):
         dag.argv[2].value() if len(dag.argv) > 2 else [],
         repo=dag.argv[3].value() if len(dag.argv) > 3 else None,
     )
-    dag.result = dag.info["image"]
+    dag.commit(dag.info["image"])
 
 
 @funkify
@@ -220,12 +227,14 @@ def execute_notebook(dag):
             f"{tmpd}/foo.ipynb",
         )
         dag.html = s3.put(filepath=f"{tmpd}/foo.html", suffix=".html")
-    dag.result = dag.html
+    dag.commit(dag.html)
 
 
 @contextmanager
 def aws_fndag():
     def _get_data():
+        if os.getenv("DML_DEBUG", "1") not in ("0", "false", "False", ""):
+            logging.basicConfig(level=logging.DEBUG)
         indata = os.environ["DML_INPUT_LOC"]
         p = urlparse(indata)
         if p.scheme == "s3":

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import boto3
 import pytest
-from daggerml import Dml, Error, Resource
+from daggerml import Dml, Error, Executable
 
 import dml_util.wrapper  # noqa: F401
 from dml_util import funk
@@ -30,6 +30,51 @@ class TestMisc:
             assert set(git_info) == {"branch", "commit", "remote", "status"}
             assert all(type(x) is str for x in git_info.values())
 
+    def test_funkify(self):
+        @funkify
+        def fn(dag):
+            return sum(dag.argv[1:].value())
+
+        vals = [1, 2, 3]
+        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
+            with Dml.temporary(cache_path=tmpd) as dml:
+                d0 = dml.new("d0", "d0")
+                d0.fn = fn
+                n = d0.fn(*vals)
+                assert n.value() == sum(vals)
+
+    def test_funkify_simple_prepop(self):
+        @funkify(prepop={"x": 10})
+        def fn(dag):
+            return sum(dag.argv[1:].value()) * dag.x.value()
+
+        vals = [1, 2, 3]
+        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
+            with Dml.temporary(cache_path=tmpd) as dml:
+                d0 = dml.new("d0", "d0")
+                d0.fn = fn
+                n = d0.fn(*vals)
+                assert n.value() == sum(vals) * 10
+
+    def test_funkify_prepop_funk(self):
+        """Test that prepop can be another funkified function and that scoping works."""
+
+        @funkify(prepop={"x": 5})
+        def inner_fn(dag):
+            return sum(dag.argv[1:].value()) * dag.x.value()
+
+        @funkify(prepop={"x": -10, "fn2": inner_fn})
+        def fn(dag):
+            return dag.fn2(*dag.argv[1:]).value() + dag.x.value()
+
+        vals = [1, 2, 3]
+        with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
+            with Dml.temporary(cache_path=tmpd) as dml:
+                d0 = dml.new("d0", "d0")
+                d0.fn = fn
+                n = d0.fn(*vals)
+                assert n.value() == sum(vals) * 5 - 10
+
     def test_subdag_caching(self):
         @funkify
         def subdag_fn(dag):
@@ -37,22 +82,21 @@ class TestMisc:
 
             return uuid4().hex
 
-        @funkify
+        @funkify(prepop={"fn": subdag_fn})
         def dag_fn(dag):
             from uuid import uuid4
 
-            fn, *args = dag.argv[1:]
-            return {str(x.value()): fn(x) for x in args}, uuid4().hex
+            args = dag.argv[1:]
+            return {str(x.value()): dag.fn(x) for x in args}, uuid4().hex
 
         vals = [1, 2, 3]
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
             with Dml.temporary(cache_path=tmpd) as dml:
                 d0 = dml.new("d0", "d0")
-                d0.dag_fn = dag_fn
-                d0.subdag_fn = subdag_fn
                 with ThreadPoolExecutor(2) as pool:
-                    futs = [pool.submit(d0.dag_fn, d0.subdag_fn, *args) for args in [vals, reversed(vals)]]
-                    a, b = [f.result() for f in futs]
+                    with patch.dict(os.environ, DML_DEBUG="1"):
+                        futs = [pool.submit(d0.call, dag_fn, *args) for args in [vals, reversed(vals)]]
+                        a, b = [f.result() for f in futs]
                 assert a != b
                 assert a[0].value() == b[0].value()
                 assert a[1].value() != b[1].value()
@@ -67,8 +111,7 @@ class TestFunkSingles:
 
             print("testing stdout...")
             print("testing stderr...", file=sys.stderr)
-            dag.result = sum(dag.argv[1:].value())
-            return dag.result
+            return sum(dag.argv[1:].value())
 
         client = boto3.client("logs")
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
@@ -92,8 +135,7 @@ class TestFunkSingles:
     def test_script_errors(self):
         @funkify
         def dag_fn(dag):
-            dag.result = dag.argv[1].value() / dag.argv[-1].value()
-            return dag.result
+            return dag.argv[1].value() / dag.argv[-1].value()
 
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
             with Dml.temporary(cache_path=tmpd) as dml:
@@ -185,7 +227,7 @@ class TestFunkSingles:
                 dag.nb = s3.put(filepath=_root_ / "tests/assets/notebook.ipynb", suffix=".ipynb")
                 dag.nb_exec = funk.execute_notebook
                 dag.html = dag.nb_exec(dag.nb, *vals)
-                dag.result = dag.html
+                dag.commit(dag.html)
                 html = s3.get(dag.result).decode().strip()
                 assert html.startswith("<!DOCTYPE html>")
                 assert f"Total sum = {sum(vals)}" in html
@@ -215,19 +257,19 @@ class TestFunkSingles:
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
             with Dml.temporary(cache_path=tmpd) as dml:
                 dag = dml.new("foo")
-                dag.cfn = Resource("cfn", adapter="dml-util-local-adapter")
+                dag.cfn = Executable("cfn", adapter="dml-util-local-adapter")
                 dag.stack = dag.cfn("stacker", tpl, {})
                 assert set(dag.stack.keys()) == {"BucketName", "BucketArn"}
 
     @pytest.mark.usefixtures("s3_bucket", "logs", "debug")
-    def test_docker(self, docker_flags):
+    def test_docker(self, docker_flags, debug):
         @funkify
         def fn(dag):
             import sys  # noqa: F811
 
             print("testing stdout...")
             print("testing stderr...", file=sys.stderr)
-            dag.result = sum(dag.argv[1:].value())
+            return sum(dag.argv[1:].value())
 
         s3 = S3Store()
         vals = [1, 2, 3]
@@ -261,7 +303,7 @@ class TestFunkSingles:
                 assert dag.baz.value() == sum(vals)
                 dag2 = dml.load(dag.baz)
                 assert dag2.result is not None
-                dag2 = dml("dag", "describe", dag2._ref.to)
+                dag2 = dml("dag", "describe", dag2.ref.to)
 
 
 class TestFunkCombos:
@@ -365,7 +407,7 @@ class TestFunkCombos:
                     assert VALID_VERSION.match(res.value())
                     dag2 = dml.load(res)
                     assert dag2.result is not None
-                dag = dml("dag", "describe", dag2._ref.to)
+                dag = dml("dag", "describe", dag2.ref.to)
 
     @skipUnless(shutil.which("ssh"), "ssh is not available")
     @skipUnless(shutil.which("hatch"), "hatch is not available")
@@ -397,7 +439,7 @@ class TestFunkCombos:
 
             print("testing stdout...")
             print("testing stderr...", file=sys.stderr)
-            dag.result = sum(dag.argv[1:].value())
+            return sum(dag.argv[1:].value())
 
         dkr_build_in_hatch = funkify(funk.dkr_build, "hatch", data={"name": "default", "path": str(_root_)})
         s3 = S3Store()
@@ -439,4 +481,4 @@ class TestFunkCombos:
                 assert dag.baz.value() == sum(vals)
                 dag2 = dml.load(dag.baz)
                 assert dag2.result is not None
-                dag2 = dml("dag", "describe", dag2._ref.to)
+                dag2 = dml("dag", "describe", dag2.ref.to)
