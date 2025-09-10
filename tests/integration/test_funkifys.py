@@ -140,16 +140,15 @@ class TestFunkSingles:
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
             with Dml.temporary(cache_path=tmpd) as dml:
                 d0 = dml.new("d0", "d0")
-                d0.f0 = dag_fn
                 with pytest.raises(Error) as exc:
-                    d0.n0 = d0.f0(1, 0)
+                    d0.n0 = d0.call(dag_fn, 1, 0)
                 assert "division by zero" in str(exc.value)
 
     @skipUnless(shutil.which("hatch"), "hatch is not available")
     @pytest.mark.usefixtures("s3_bucket", "logs")
     def test_hatch(self):
         @funkify(uri="hatch", data={"name": "pandas", "path": str(_root_)})
-        @funkify
+        @funkify(prepop={"x": 10})  # note prepop specified on inner funkify -- could be either
         def dag_fn(dag):
             import pandas as pd
 
@@ -162,6 +161,7 @@ class TestFunkSingles:
                 d0.f0 = dag_fn
                 result = d0.f0()
                 assert VALID_VERSION.match(result.value())
+                assert result.load().x.value() == 10
                 config = result.load()[".dml/env"].value()
         client = boto3.client("logs")
         logs = client.get_log_events(logGroupName=config["log_group"], logStreamName=config["log_stdout"])["events"]

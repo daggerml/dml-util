@@ -154,7 +154,12 @@ def funkify(
     prepop = prepop or {}
     if isinstance(adapter, Executable):
         assert isinstance(fn, Executable), "Adapter must be a Executable if fn is a Executable"
-        return Executable(adapter.uri, data={"sub": fn, **data}, adapter=adapter.adapter, prepop=prepop)
+        return Executable(
+            adapter.uri,
+            data={"sub": fn, **data},
+            adapter=adapter.adapter,
+            prepop={**fn.prepop, **prepop},
+        )
     adapter_ = AdapterBase.ADAPTERS.get(adapter)
     if adapter_ is None:
         adapter_ = which(adapter)
@@ -163,6 +168,7 @@ def funkify(
         return Executable(uri=uri, data=data, adapter=adapter_, prepop=prepop)
     if isinstance(fn, Executable):
         data = {"sub": fn, **data}
+        prepop = {**fn.prepop, **prepop}
     elif isinstance(fn, str):
         data = {"script": fn, **data}
     else:
