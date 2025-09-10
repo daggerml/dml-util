@@ -56,7 +56,6 @@ class CfnRunner(RunnerBase):
         return state, self.fmt(state["StackId"], status, raw_status)
 
     def submit(self, client):
-        assert Dml is not None, "dml is not installed..."
         with Dml.temporary() as dml:
             with dml.new(data=self.input.dump) as dag:
                 name, js, params = dag.argv[1:4].value()
@@ -84,6 +83,7 @@ class CfnRunner(RunnerBase):
             state, msg = self.submit(client)
         else:
             state, msg = self.describe_stack(client, **state)
+        assert isinstance(state, dict)
         if "outputs" in state:
 
             def _handler(dump):
@@ -98,7 +98,7 @@ class CfnRunner(RunnerBase):
                         dag.stack_id = state["StackId"]
                         dag.stack_name = state["name"]
                         dag.outputs = state["outputs"]
-                        dag.result = dag.outputs
+                        dag.commit(dag.outputs)
             except KeyboardInterrupt:
                 raise
             except Exception:
