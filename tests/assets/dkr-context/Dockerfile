@@ -5,7 +5,9 @@ COPY . /dml-lib/
 RUN pip3 install --no-cache-dir watchtower
 
 # Install daggerml
-RUN pip3 install --no-cache-dir /dml-lib/ /dml-lib/submodules/python-lib/ /dml-lib/submodules/daggerml-cli/
+RUN pip3 install --no-cache-dir /dml-lib/
+RUN pip3 install --no-cache-dir /dml-lib/submodules/python-lib/
+RUN pip3 install --no-cache-dir /dml-lib/submodules/daggerml-cli/
 
 # Write the entrypoint script to /entrypoint.sh
 RUN cat <<'EOF' > /entrypoint.sh
