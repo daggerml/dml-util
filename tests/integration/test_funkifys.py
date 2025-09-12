@@ -280,6 +280,7 @@ class TestFunkSingles:
                     "tests/*.py",
                     ".pytest_cache",
                     ".ruff_cache",
+                    "**/__about__.py",
                     "__pycache__",
                     "examples",
                     ".venv",
