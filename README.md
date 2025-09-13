@@ -37,12 +37,12 @@ from dml_util import funkify
 @funkify
 def add_numbers(dag):
     """Add numbers together.
-    
+
     Parameters
     ----------
     dag : DmlDag
         The DAG context provided by DaggerML.
-    
+
     Returns
     -------
     int
@@ -75,7 +75,7 @@ from dml_util import dkr_build, funkify, S3Store
 @funkify
 def fn(dag):
     *args, denom = dag.argv[1:].value()
-    dag.result = sum(args) / denom
+    return sum(args) / denom
 
 s3 = S3Store()
 tar = s3.tar(dml, ".")

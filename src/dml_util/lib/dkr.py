@@ -21,15 +21,19 @@ class Ecr:
     ecr: "boto3.client" = field(default_factory=lambda: get_client("ecr"))
     s3: "boto3.client" = field(default_factory=lambda: get_client("s3"))
 
+    @staticmethod
+    def _cli(*args, **kwargs):
+        return run_cli(*args, capture_output=False, **kwargs)
+
     def build(self, tarball, build_flags=(), repo=None):
         p = urlparse(tarball.uri)
         with TemporaryDirectory() as tmpd:
             with NamedTemporaryFile(suffix=".tar") as tmpf:
                 self.s3.download_file(p.netloc, p.path[1:], tmpf.name)
-                run_cli(["tar", "-xvf", tmpf.name, "-C", tmpd])
+                self._cli(["tar", "-xvf", tmpf.name, "-C", tmpd])
             _tag = uuid4().hex
             local_image = f"dml:{_tag}"
-            run_cli(["docker", "build", *build_flags, "-t", local_image, tmpd])
+            self._cli(["docker", "build", *build_flags, "-t", local_image, tmpd])
         if repo:
             if isinstance(repo, Node):
                 repo = repo.value()
@@ -39,7 +43,7 @@ class Ecr:
         return {"image": Resource(local_image), "tag": _tag}
 
     def _login(self, proxy_endpoint, password):
-        return run_cli(
+        return self._cli(
             [
                 "docker",
                 "login",
@@ -61,10 +65,10 @@ class Ecr:
         return self._login(proxy_endpoint[8:], password)
 
     def _tag(self, local_image, remote_image):
-        run_cli(["docker", "tag", local_image, remote_image])
+        self._cli(["docker", "tag", local_image, remote_image])
 
     def _push(self, remote_image):
-        run_cli(["docker", "push", remote_image])
+        self._cli(["docker", "push", remote_image])
 
     def push(self, local_image, repo_uri):
         tag = local_image.split(":")[-1]
