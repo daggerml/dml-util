@@ -143,7 +143,7 @@
     "ECSCluster": {
       "Type": "AWS::ECS::Cluster",
       "Properties": {
-        "ClusterName": "my-batch-ecs",
+        "ClusterName": { "Fn::Sub": "${AWS::StackName}-ecs-cluster" },
         "ClusterSettings": [
           {
             "Name": "containerInsights",

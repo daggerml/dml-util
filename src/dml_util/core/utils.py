@@ -60,7 +60,7 @@ def dict_product(d):
         yield dict(zip(keys, combination))
 
 
-def _run_cli(command, capture_output=True, check=True, **kw):
+def run_cli(command, capture_output=True, check=True, **kw):
     result = subprocess.run(command, capture_output=capture_output, text=True, check=False, **kw)
     logger.debug("command: %r", command)
     for line in (result.stderr or "").splitlines():
@@ -69,7 +69,7 @@ def _run_cli(command, capture_output=True, check=True, **kw):
 
     logger.debug("end STDERR for command: %r", command)
     if result.returncode != 0:
-        msg = f"_run_cli: {command}\n{result.returncode = }"
+        msg = f"run_cli: {command}\n{result.returncode = }"
         if capture_output:
             msg += f"\n{result.stdout}\n\n{result.stderr}"
         if check:

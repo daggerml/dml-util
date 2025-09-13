@@ -239,7 +239,7 @@ def execute_notebook(dag):
 @contextmanager
 def aws_fndag():
     def _get_data():
-        if os.getenv("DML_DEBUG", "1") not in ("0", "false", "False", ""):
+        if os.getenv("DML_DEBUG", "").lower() not in ("0", "false", ""):
             logging.basicConfig(level=logging.DEBUG)
         indata = os.environ["DML_INPUT_LOC"]
         p = urlparse(indata)

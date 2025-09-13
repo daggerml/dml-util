@@ -206,7 +206,7 @@ class TestCondaRunner:
 
     def test_conda_runner_funkify(self):
         """Test CondaRunner.funkify method."""
-        with patch("dml_util.runners.local._run_cli", return_value="/usr/local/conda"):
+        with patch("dml_util.runners.local.run_cli", return_value="/usr/local/conda"):
             with patch("dml_util.runners.local.WrappedRunner.funkify") as mock_funkify:
                 CondaRunner.funkify(
                     name="test-env",
@@ -285,7 +285,7 @@ class TestDockerRunner:
                 resp = dkr.update({})  # no state
                 assert resp[1:] == ("container testing0 started", None)
             assert resp[0]["tmpd"] == os.getenv("DML_FN_CACHE_DIR")
-        with patch("dml_util.runners.container._run_cli") as mock_run_cli:
+        with patch("dml_util.runners.container.run_cli") as mock_run_cli:
             # running job
             mock_run_cli.side_effect = ["running", "_logs_"]
             resp = dkr.update({"cid": "foo123"})
