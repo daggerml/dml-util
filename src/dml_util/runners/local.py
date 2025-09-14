@@ -13,7 +13,7 @@ import subprocess
 from tempfile import TemporaryDirectory, mkdtemp
 from textwrap import dedent
 
-from dml_util.core.utils import _run_cli, if_read_file, proc_exists
+from dml_util.core.utils import if_read_file, proc_exists, run_cli
 from dml_util.lib.submit import launch_detached
 from dml_util.runners.base import RunnerBase
 
@@ -71,11 +71,11 @@ class ScriptRunner(RunnerBase):
         logger.debug(f"Cleaning up state: {state}")
         if "pid" in state:
             logger.debug(f"Killing process {state['pid']}")
-            _run_cli(f"kill -9 {state['pid']} || echo", shell=True)
+            run_cli(f"kill -9 {state['pid']} || echo", shell=True)
         if "tmpd" in state:
             logger.debug(f"Removing temporary directory {state['tmpd']}")
             command = "rm -r {} || echo".format(shlex.quote(state["tmpd"]))
-            _run_cli(command, shell=True)
+            run_cli(command, shell=True)
         logger.debug("Calling super().gc()")
         super().gc(state)
 
@@ -197,7 +197,7 @@ class CondaRunner(WrappedRunner):
     @classmethod
     def funkify(cls, name, sub, conda_loc=None):
         if conda_loc is None:
-            conda_loc = str(_run_cli(["conda", "info", "--base"]).strip())
+            conda_loc = str(run_cli(["conda", "info", "--base"]).strip())
             logger.info("Using conda from %r", conda_loc)
         script = dedent(
             f"""

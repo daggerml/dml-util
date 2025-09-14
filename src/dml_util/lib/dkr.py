@@ -10,7 +10,7 @@ from uuid import uuid4
 from daggerml import Node, Resource
 
 from dml_util.aws import get_client
-from dml_util.core.utils import _run_cli
+from dml_util.core.utils import run_cli
 
 if TYPE_CHECKING:
     import boto3  # noqa: F401
@@ -23,7 +23,7 @@ class Ecr:
 
     @staticmethod
     def _cli(*args, **kwargs):
-        return _run_cli(*args, capture_output=False, **kwargs)
+        return run_cli(*args, capture_output=False, **kwargs)
 
     def build(self, tarball, build_flags=(), repo=None):
         p = urlparse(tarball.uri)
@@ -33,9 +33,7 @@ class Ecr:
                 self._cli(["tar", "-xvf", tmpf.name, "-C", tmpd])
             _tag = uuid4().hex
             local_image = f"dml:{_tag}"
-            self._cli(
-                ["docker", "build", *build_flags, "-t", local_image, tmpd],
-            )
+            self._cli(["docker", "build", *build_flags, "-t", local_image, tmpd])
         if repo:
             if isinstance(repo, Node):
                 repo = repo.value()

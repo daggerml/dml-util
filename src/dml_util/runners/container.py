@@ -12,7 +12,7 @@ import subprocess
 from tempfile import mkdtemp
 from textwrap import dedent
 
-from dml_util.core.utils import _run_cli, if_read_file, proc_exists
+from dml_util.core.utils import if_read_file, proc_exists, run_cli
 from dml_util.runners.base import RunnerBase
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class DockerRunner(RunnerBase):
 
     def _dkr(self, *args, **kwargs):
         dkr = self.input.kwargs.get("docker_path") or "docker"
-        return _run_cli([dkr, *args], **kwargs)
+        return run_cli([dkr, *args], **kwargs)
 
     def start_docker(self, tmpd, sub_adapter, sub_uri):
         # FIXME: remove this method and put this in `submit`.
@@ -111,9 +111,9 @@ class DockerRunner(RunnerBase):
 
     def gc(self, state):
         if "cid" in state:
-            _run_cli(["docker", "rm", state["cid"]], check=False)
+            run_cli(["docker", "rm", state["cid"]], check=False)
         if "tmpd" in state:
-            _run_cli(["rm", "-r", state["tmpd"]], check=False)
+            run_cli(["rm", "-r", state["tmpd"]], check=False)
         super().gc(state)
 
 
@@ -154,9 +154,9 @@ class Test(DockerRunner):
 
     def gc(self, state):
         if "cid" in state:
-            _run_cli(["kill", "-9", str(state["cid"][0])], check=False)
+            run_cli(["kill", "-9", str(state["cid"][0])], check=False)
         if "tmpd" in state:
             command = "rm -r {} || echo".format(shlex.quote(state["tmpd"]))
-            _run_cli(command, shell=True)
+            run_cli(command, shell=True)
         state["cid"] = "doesnotexist"
         super().gc(state)
