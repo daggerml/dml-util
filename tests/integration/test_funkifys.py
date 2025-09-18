@@ -296,8 +296,8 @@ class TestFunkSingles:
                 )
                 dag.fn = funkify(
                     fn,
-                    "docker",
-                    {"image": dag.img.value(), "flags": docker_flags},
+                    uri="docker",
+                    data={"image": dag.img.value(), "flags": docker_flags},
                     adapter="local",
                 )
                 dag.baz = dag.fn(*vals)
@@ -468,8 +468,8 @@ class TestFunkCombos:
                     funkify(
                         funkify(
                             fn,
-                            "docker",
-                            {"image": dag.img.value(), "flags": docker_flags},
+                            uri="docker",
+                            data={"image": dag.img.value(), "flags": docker_flags},
                             adapter="local",
                         ),
                         uri="hatch",
