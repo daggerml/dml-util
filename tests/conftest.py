@@ -90,8 +90,9 @@ def debug(clear_envvars):
 
 @pytest.fixture
 def dml(tmpdir):
-    with Dml.temporary(cache_path=str(tmpdir)) as dml:
-        yield dml
+    with Dml.temporary(cache_path=str(tmpdir)) as _dml:
+        with patch.dict(os.environ, _dml.envvars):
+            yield _dml
 
 
 @pytest.fixture

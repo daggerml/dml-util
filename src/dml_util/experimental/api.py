@@ -4,13 +4,14 @@ import ast
 import dataclasses as dc
 import os
 import subprocess
-from dataclasses import InitVar, dataclass, fields, is_dataclass
+from collections import defaultdict, deque
+from dataclasses import InitVar, dataclass, fields
 from functools import partial
 from inspect import getmro, getsource, getsourcefile
 from textwrap import dedent
 from typing import Any, Optional
 
-from daggerml import Dml, Executable
+from daggerml import Dml, Executable, Node
 
 from dml_util.funk import funkify
 
@@ -91,8 +92,6 @@ def get_dag_name(dag: type) -> str:
 
 
 def topo_sort(dependencies: dict) -> list:
-    from collections import defaultdict, deque
-
     deg = defaultdict(int)
     for n, deps in dependencies.items():
         deg.setdefault(n, 0)
@@ -135,35 +134,53 @@ class AutoDataclassBase:
         dc.dataclass(**opts)(cls)
 
 
+RESERVED_WORDS = {"dag", "dml", "argv", "put", "commit"}
+
+
+def proc_deps(cls):
+    deps = {}
+    for k, v in build_class_graph(cls).items():
+        if k in {"put", "commit"}:
+            continue
+        if k in RESERVED_WORDS:
+            raise ValueError(f"Field or method name {k!r} is reserved")
+        deps[k] = []
+        for x in sorted(set(v["internal"]) - RESERVED_WORDS):
+            # for each dep, if it's not a field, method, nor prepop, error out
+            if not hasattr(cls, x) and x not in getattr(getattr(cls, k), "prepop", []):
+                raise ValueError(f"Method {k!r} depends on unknown field or method: {x!r}")
+            # Only add if it's not a prepop
+            if x not in getattr(getattr(cls, k), "prepop", []):
+                deps[k].append(x)
+    order = reversed(topo_sort({k: sorted(set(deps) & set(v)) for k, v in deps.items()}))
+    return deps, order
+
+
 @dataclass(init=False)
 class Dag(AutoDataclassBase):
     dml: InitVar[Optional[Dml]] = None
     name: InitVar[Optional[str]] = None
 
     def __post_init__(self, dml: Optional[Dml], name: Optional[str]) -> None:
-        assert is_dataclass(self), "Dag must be a dataclass"
         dml = dml or Dml()
-        dependencies = build_class_graph(self.__class__)
-        order = reversed(
-            topo_sort({k: [x for x in v["internal"] if x in dependencies.keys()] for k, v in dependencies.items()})
-        )
+        deps, order = proc_deps(self.__class__)
         name = name or get_dag_name(self.__class__)
         message = self.__doc__ or f"Dag: {name}"
         dag = dml.new(name, message=message)
-        object.__setattr__(self, "dag", dag)
-        for fld in [x for x in fields(self) if hasattr(self, x.name)]:
-            object.__setattr__(self, fld.name, dag.put(getattr(self, fld.name), name=fld.name))
+        for fld in [x.name for x in fields(self) if hasattr(self, x.name)]:
+            object.__setattr__(self, fld, dag.put(getattr(self, fld), name=fld))
         for method_name in order:
             method = getattr(self, method_name)
             if not isinstance(method, Executable):
                 method = funk(method)
             assert isinstance(method, Executable)
-            method.prepop.update({k: dag[k] for k in dependencies[method_name]["internal"] if hasattr(dag, k)})
+            method.prepop.update({k: dag[k] for k in deps[method_name] if hasattr(dag, k)})
             object.__setattr__(self, method_name, dag.put(method, name=method_name))
         self.dag = dag
+        self.dml = dml
 
-    def __enter__(self) -> "Dag":
-        return self
+    def put(self, obj: Any, name: Optional[str] = None) -> Node:
+        return self.dag.put(obj, name=name)
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.dag.__exit__(exc_type, exc_value, traceback)
+    def commit(self, obj: Any = None) -> None:
+        return self.dag.commit(obj)

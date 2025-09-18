@@ -1,15 +1,7 @@
-import os
-from dataclasses import is_dataclass, replace
-from tempfile import TemporaryDirectory
-from unittest.mock import patch
-
-import daggerml.core
 import pytest
-from daggerml import Dml
-from daggerml.core import ExecutableNode, ScalarNode
 
-from dml_util import api
-from dml_util.api import build_class_graph
+from dml_util.experimental import api
+from dml_util.experimental.api import build_class_graph
 
 
 def dec(fn):
@@ -17,14 +9,6 @@ def dec(fn):
         return fn(*args, **kwargs)
 
     return wrapper
-
-
-@pytest.fixture(autouse=True)
-def dml():
-    with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
-        with Dml.temporary(cache_path=tmpd) as _dml:
-            with patch.dict(os.environ, {"DML_CACHE_PATH": tmpd, **_dml.envvars}):
-                yield _dml
 
 
 class BasicAccess:
@@ -141,42 +125,38 @@ class MyDag(api.Dag):
         return arg0.value() + 1
 
 
-class TestDag:
-    def test_dag_name_default(self, dml):
-        my_dag = MyDag()
-        my_dag.dag.commit(2)
-        assert [x["name"] for x in dml("dag", "list")] == ["tests:unit:test_api::MyDag"]
+class TestDagCompilation:
+    def test_dag_name_default(self):
+        assert api.get_dag_name(MyDag) == "tests:unit:experimental:test_api::MyDag"
 
-    def test_dag_name_explicit(self, dml):
-        my_dag = MyDag(name="custom_name")
-        my_dag.dag.commit(2)
-        assert [x["name"] for x in dml("dag", "list")] == ["custom_name"]
+    def test_access_does_not_exist(self):
+        class DagClass(MyDag):
+            def step1(self):
+                self.doesnotexist
 
-    def test_dml_instance(self, dml):
-        my_dag = MyDag(dml=dml)
-        assert replace(my_dag.dag.dml, token=None) == dml
+        with pytest.raises(ValueError, match="depends on unknown field or method: 'doesnotexist'"):
+            DagClass()
 
-    def test_node_attrs(self):
-        my_dag = MyDag()
-        assert is_dataclass(my_dag)
-        assert isinstance(my_dag.dag, daggerml.core.Dag)
-        assert isinstance(my_dag.dag_arg, ScalarNode)
-        assert isinstance(my_dag.step0, ExecutableNode)
-
-    def test_with_funks(self):
+    def test_reserved_words(self):
         class DagClass(api.Dag):
-            dag_arg: int = 2
+            a: int = 5
 
-            @api.funk(prepop={"x": 3})
-            def step1(self, arg0, arg1):
-                self.intermediate = arg0.value() * self.dag_arg.value()
-                return self.intermediate.value() + arg1.value() + 5
+            def fn(self, arg0):
+                return self.commit(self.put(self.argv + self.a))
 
-        my_dag = DagClass()
-        assert is_dataclass(my_dag)
-        assert isinstance(my_dag.dag, daggerml.core.Dag)
-        assert isinstance(my_dag.dag_arg, ScalarNode)
-        assert my_dag.step1.value().prepop == {"dag_arg": 2, "x": 3}
+        deps, order = api.proc_deps(DagClass)
+        assert list(order) == ["fn"]
+        assert deps == {"fn": ["a"]}
+
+    def test_reserved_words_defined(self):
+        class DagClass(api.Dag):
+            a: int = 5
+
+            def argv(self):
+                return 3
+
+        with pytest.raises(ValueError, match="Field or method name 'argv' is reserved"):
+            api.proc_deps(DagClass)
 
     def test_subclass(self):
         class DagClass(MyDag):
@@ -184,25 +164,12 @@ class TestDag:
 
             def step1(self, arg0, arg1):
                 # Note `dag_arg`
-                self.intermediate = arg0.value() * self.dag_arg.value()
-                return self.intermediate.value() + arg1.value() + 5
+                self.intermediate = arg0.value() * self.dag_arg.value()  # note `intermediate` is not a dep
+                return self.step0(self.intermediate).value() + arg1.value() + 5
 
-        dag = DagClass()
-        assert is_dataclass(dag)
-        assert isinstance(dag.dag, daggerml.core.Dag)
-        assert isinstance(dag.foo, ScalarNode)
-        assert isinstance(dag.step1, ExecutableNode)
-        # check inherited fields and meethods
-        assert isinstance(dag.dag_arg, ScalarNode)
-        assert isinstance(dag.step0, ExecutableNode)
+            def step2(self, arg0):
+                return self.step1(arg0).value() * self.foo.value()
 
-
-def test_run_funk():
-    class DagClass(MyDag):
-        def step1(self, arg0, arg1):
-            self.intermediate = arg0.value() * self.dag_arg.value()
-            return self.intermediate.value() + arg1.value() + 5
-
-    dag = DagClass()
-    assert dag.step1.value().prepop == {"dag_arg": 10}
-    assert dag.step1(1, 2).value() == 17
+        deps, order = api.proc_deps(DagClass)
+        assert list(order) == ["step0", "step1", "step2"]
+        assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"]}
