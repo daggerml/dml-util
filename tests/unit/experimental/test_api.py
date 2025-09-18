@@ -132,7 +132,7 @@ class TestDagCompilation:
     def test_access_does_not_exist(self):
         class DagClass(MyDag):
             def step1(self):
-                self.doesnotexist
+                self.doesnotexist  # noqa: B018
 
         with pytest.raises(ValueError, match="depends on unknown field or method: 'doesnotexist'"):
             DagClass()

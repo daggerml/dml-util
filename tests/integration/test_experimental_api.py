@@ -55,7 +55,7 @@ class TestDagApi:
 
             @api.funk(prepop={"foo": 3})
             def step1(self):
-                self.foo
+                self.foo  # noqa: B018
 
         dag = DagClass()  # does not raise
         assert dag.step1.value().prepop == {"foo": 3}
