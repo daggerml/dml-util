@@ -6,7 +6,17 @@ from functools import partial
 from inspect import getsource
 from shutil import which
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Sequence, Union, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Literal,
+    Optional,
+    Sequence,
+    Union,
+    overload,
+)
 from urllib.parse import urlparse
 
 import boto3
@@ -14,13 +24,19 @@ from daggerml import Dml, Executable
 
 from dml_util.adapters import AdapterBase
 
+try:
+    from typing import Concatenate, ParamSpec
+except ImportError:
+    from typing_extensions import Concatenate, ParamSpec
+
 if TYPE_CHECKING:
     import daggerml.core
+
 
 logger = logging.getLogger(__name__)
 
 
-def _fnk(fn, extra_fns, extra_lines):
+def _fnk(fn, extra_fns, extra_lines, unpack_args=False):
     def get_src(f):
         lines = dedent(getsource(f)).split("\n")
         while not lines[0].startswith("def "):
@@ -38,7 +54,7 @@ def _fnk(fn, extra_fns, extra_lines):
 
         if __name__ == "__main__":
             with aws_fndag() as dag:
-                res = {fn_name}(dag)
+                res = {fn_name}(dag{args})
                 if dag.ref is None:
                     dag.commit(res)
         """
@@ -47,9 +63,45 @@ def _fnk(fn, extra_fns, extra_lines):
         src="\n\n".join([get_src(f) for f in [*extra_fns, fn]]),
         fn_name=fn.__name__,
         eln="\n".join(extra_lines),
+        args=", *dag.argv[1:]" if unpack_args else "",
     )
     src = re.sub(r"\n{3,}", "\n\n", src)
     return src
+
+
+_PARAMS = ParamSpec("P")
+_DAG_FN = Callable[["daggerml.core.Dag"], Any]
+_UNPACKED = Callable[
+    Concatenate[Any, _PARAMS], Any
+]  # cannot use dml_util.api.Dag here because python typing limitations
+
+
+@overload
+def funkify(
+    fn: Executable,
+    *,
+    uri: str = "script",
+    data: Optional[dict] = None,
+    adapter: Union[Executable, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+    prepop: Optional[Dict[str, Any]] = None,
+    unpack_args: bool = False,
+) -> Executable: ...
+
+
+@overload
+def funkify(
+    fn: Union[_DAG_FN, str],
+    *,
+    uri: str = "script",
+    data: Optional[dict] = None,
+    adapter: Union[Executable, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
+    prepop: Optional[Dict[str, Any]] = None,
+    unpack_args: Literal[False] = False,
+) -> Executable: ...
 
 
 @overload
@@ -62,41 +114,49 @@ def funkify(
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
     prepop: Optional[Dict[str, Any]] = None,
-) -> Callable[[Union[Callable[["daggerml.core.Dag"], Any], Executable]], Executable]: ...
+    unpack_args: Literal[False] = False,
+) -> Callable[[Union[_DAG_FN, str]], Executable]: ...
 
 
 @overload
 def funkify(
-    fn: Executable,
-    uri: str = "script",
-    data: Optional[dict] = None,
-    adapter: Union[Executable, str] = "local",
+    fn: Union[_UNPACKED, str],
     *,
+    uri: str = "script",
+    data: Optional[dict] = None,
+    adapter: Union[Executable, str] = "local",
+    extra_fns: Sequence[Callable] = (),
+    extra_lines: Sequence[str] = (),
     prepop: Optional[Dict[str, Any]] = None,
+    unpack_args: Literal[True] = True,
 ) -> Executable: ...
 
 
 @overload
 def funkify(
-    fn: Union[Callable[["daggerml.core.Dag"], Any], str],
+    fn: None = None,
+    *,
     uri: str = "script",
     data: Optional[dict] = None,
     adapter: Union[Executable, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
     prepop: Optional[Dict[str, Any]] = None,
-) -> Executable: ...
+    unpack_args: Literal[True] = True,
+) -> Callable[[Union[_UNPACKED, str]], Executable]: ...
 
 
 def funkify(
-    fn: Union[None, Callable[["daggerml.core.Dag"], Any], Executable, str] = None,
+    fn: Union[None, _DAG_FN, _UNPACKED, Executable, str] = None,
+    *,
     uri: str = "script",
     data: Optional[dict] = None,
     adapter: Union[Executable, str] = "local",
     extra_fns: Sequence[Callable] = (),
     extra_lines: Sequence[str] = (),
     prepop: Optional[Dict[str, Any]] = None,
-) -> Union[Executable, Callable[[Callable[["daggerml.core.Dag"], Any]], Executable]]:
+    unpack_args: bool = False,
+) -> Union[Executable, Callable[[_DAG_FN], Executable], Callable[[_UNPACKED], Executable]]:
     """
     Decorator to funkify a function into a DML Executable.
 
@@ -114,6 +174,10 @@ def funkify(
         Additional functions to include in the script. Defaults to an empty tuple.
     extra_lines : tuple, optional
         Additional lines to include in the script. Defaults to an empty tuple.
+    prepop : dict, optional
+        Prepopulated values for the Executable. Defaults to None.
+    unpack_args : bool, optional
+        Whether to unpack additional command-line arguments into the function. Defaults to False.
 
     Returns
     -------
@@ -141,7 +205,7 @@ def funkify(
     >>> funkify(another_function, data={"image": "my-python:3.8"}, adapter=dag.batch.value())  # doctest: +SKIP
     """
     if fn is None:
-        return partial(
+        p = partial(
             funkify,
             uri=uri,
             data=data,
@@ -150,6 +214,10 @@ def funkify(
             extra_lines=extra_lines,
             prepop=prepop,
         )
+        # note: pyright yells because it's looking for explicit `unpack_args`, so we do this
+        if unpack_args:
+            return partial(p, unpack_args=True)
+        return partial(p, unpack_args=False)
     data = data or {}
     prepop = prepop or {}
     if isinstance(adapter, Executable):
@@ -172,7 +240,7 @@ def funkify(
     elif isinstance(fn, str):
         data = {"script": fn, **data}
     else:
-        src = _fnk(fn, extra_fns, extra_lines)
+        src = _fnk(fn, extra_fns, extra_lines, unpack_args=unpack_args)
         data = {"script": src, **data}
     resource = adapter_.funkify(uri, data=data, prepop=prepop)
     object.__setattr__(resource, "fn", fn)
