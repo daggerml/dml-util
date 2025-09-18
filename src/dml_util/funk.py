@@ -10,11 +10,9 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Concatenate,
     Dict,
     Literal,
     Optional,
-    ParamSpec,
     Sequence,
     Union,
     overload,
@@ -25,6 +23,11 @@ import boto3
 from daggerml import Dml, Executable
 
 from dml_util.adapters import AdapterBase
+
+try:
+    from typing import Concatenate, ParamSpec
+except ImportError:
+    from typing_extensions import Concatenate, ParamSpec
 
 if TYPE_CHECKING:
     import daggerml.core
