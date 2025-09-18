@@ -1,177 +1,169 @@
-import json
+from __future__ import annotations
+
+import ast
+import dataclasses as dc
 import os
-import re
 import subprocess
-from dataclasses import dataclass, fields, is_dataclass
-from functools import partial, wraps
-from inspect import getsource
+from dataclasses import InitVar, dataclass, fields, is_dataclass
+from functools import partial
+from inspect import getmro, getsource, getsourcefile
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Concatenate, Dict, Optional, ParamSpec, Sequence, Type, Union, overload
+from typing import Any, Optional
 
 from daggerml import Dml, Executable
 
-from dml_util.lib.analyzer import build_class_graph, get_dag_name, topo_sort
+from dml_util.funk import funkify
 
-if TYPE_CHECKING:
-    import daggerml.core
-
-_P = ParamSpec("_P")
-
-@overload
-def funk(
-    fn: None = None,
-    *,
-    prepop: Optional[Dict[str, Any]] = None,
-    extra_fns: Sequence[Callable] = (),
-) -> Callable[[Callable[Concatenate["daggerml.core.Dag", _P], Any]], Executable]: ...
-@overload
-def funk(
-    fn: Callable[Concatenate["daggerml.core.Dag", _P], Any],
-    *,
-    prepop: Optional[Dict[str, Any]] = None,
-    extra_fns: Sequence[Callable] = (),
-) -> Executable: ...
-def funk(
-    fn: Optional[Callable] = None,
-    *,
-    prepop: Optional[Dict[str, Any]] = None,
-    extra_fns: Sequence[Callable] = (),
-) -> Union[Executable, Callable]:
-    """A decorator that marks a method as a funk (a Dag step)."""
-    if fn is None:
-        return partial(funk, prepop=prepop, extra_fns=extra_fns)
-    def get_src(f):
-        lines = dedent(getsource(f)).split("\n")
-        while not lines[0].startswith("def "):
-            lines.pop(0)
-        return "\n".join(lines)
-    tpl = dedent(
-        """
-        #!/usr/bin/env python3
-        from dml_util import aws_fndag
-
-        {src}
-
-        if __name__ == "__main__":
-            with aws_fndag() as dag:
-                res = {fn_name}(dag, *dag.argv[1:])
-                if dag.ref is None:
-                    dag.commit(res)
-        """
-    ).strip()
-    src = tpl.format(
-        src="\n\n".join([get_src(f) for f in [*extra_fns, fn]]),
-        fn_name=fn.__name__,
-    )
-    src = re.sub(r"\n{3,}", "\n\n", src)
-    return Executable(
-        "script",
-        data={"script": src},
-        prepop=prepop or {},
-        adapter="dml-util-local-adapter",
-    )
+try:
+    from typing import dataclass_transform  # 3.11+
+except ImportError:  # 3.8–3.10
+    from typing_extensions import dataclass_transform  # type: ignore
 
 
-def compile(cls: Type, dml: Optional[Dml] = None) -> type:
-    """Compiles a Dag class and runs the Dag.run() method.
+funk = partial(funkify, unpack_args=True)
 
-    Assumptions:
-    1. the dag is defined in a file in the dags/ directory.
-    2. the dag is a dataclass with no-arg constructor.
-    """
-    assert is_dataclass(cls), "Dag must be a dataclass"
-    dependencies = build_class_graph(cls)
-    order = topo_sort({k: [x for x in v["internal"] if x in dependencies.keys()] for k, v in dependencies.items()})
-    dag_name = get_dag_name(cls)
-    dag_instance = cls()
-    dml = (dml or Dml())
-    with dml.new(dag_name) as dag:
-        for field in fields(dag_instance):
-            dag[field.name] = getattr(dag_instance, field.name)
+
+class MethodAnalyzer(ast.NodeVisitor):
+    def __init__(self, class_methods):
+        self.class_methods = class_methods
+        self.called = set()
+        self.writes = set()
+        self.reads = set()
+
+    def visit_Call(self, node):
+        f = node.func
+        if (
+            isinstance(f, ast.Attribute)
+            and isinstance(f.value, ast.Name)
+            and f.value.id == "self"
+            and f.attr in self.class_methods
+        ):
+            self.called.add(f.attr)
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id == "self":
+            (self.writes if isinstance(node.ctx, ast.Store) else self.reads).add(node.attr)
+            if node.attr in self.writes and isinstance(node.ctx, ast.Load):
+                self.reads.discard(node.attr)
+        self.generic_visit(node)
+
+
+def build_class_graph(cls):
+    methods_ast = {}
+    for k in getmro(cls):
+        if k is object:
+            continue
+        try:
+            tree = ast.parse(dedent(getsource(k)))
+        except Exception:
+            continue
+        c = next((n for n in tree.body if isinstance(n, ast.ClassDef)), None)
+        if not c:
+            continue
+        for n in c.body:
+            if isinstance(n, ast.FunctionDef) and not n.name.startswith("_"):
+                methods_ast.setdefault(n.name, n)
+    class_methods = set(methods_ast)
+    graph = {}
+    for name, node in methods_ast.items():
+        a = MethodAnalyzer(class_methods)
+        a.visit(node)
+        graph[name] = {"internal": sorted(a.called | a.reads)}
+    return graph
+
+
+def get_dag_name(dag: type) -> str:
+    p = getsourcefile(dag)
+    assert p is not None
+    p = os.path.splitext(p)[0]
+    root = os.getenv("DML_REPO_ROOT")
+    if not root:
+        try:
+            root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"]).decode().strip()
+        except Exception:
+            pass
+    root = root or os.getcwd()
+    parts = os.path.relpath(p, root).split(os.sep)
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ":".join(parts) + "::" + dag.__name__
+
+
+def topo_sort(dependencies: dict) -> list:
+    from collections import defaultdict, deque
+
+    deg = defaultdict(int)
+    for n, deps in dependencies.items():
+        deg.setdefault(n, 0)
+        for d in deps:
+            deg[d] += 1
+    q, out = deque([n for n, v in deg.items() if v == 0]), []
+    while q:
+        n = q.popleft()
+        out.append(n)
+        for m in dependencies.get(n, []):
+            deg[m] -= 1
+            if deg[m] == 0:
+                q.append(m)
+    if len(out) != len(deg):
+        raise ValueError("Cycle detected in dependency graph")
+    return out
+
+
+def _copy_params(p) -> dict[str, Any]:
+    keys = ("init", "repr", "eq", "order", "unsafe_hash", "frozen", "kw_only", "slots", "match_args")
+    return {k: getattr(p, k) for k in keys if hasattr(p, k)}
+
+
+@dataclass_transform()
+class AutoDataclassBase:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # If subclass is already explicitly a dataclass, leave it alone.
+        if "__dataclass_params__" in cls.__dict__:
+            return
+        # Find nearest dataclass ancestor and copy its options (except init)
+        params = None
+        for b in cls.__mro__[1:]:
+            p = b.__dict__.get("__dataclass_params__")
+            if p is not None:
+                params = p
+                break
+        opts = _copy_params(params) if params else {}
+        opts["init"] = True  # <-- important: generate an __init__ for the subclass
+        dc.dataclass(**opts)(cls)
+
+
+@dataclass(init=False)
+class Dag(AutoDataclassBase):
+    dml: InitVar[Optional[Dml]] = None
+    name: InitVar[Optional[str]] = None
+
+    def __post_init__(self, dml: Optional[Dml], name: Optional[str]) -> None:
+        assert is_dataclass(self), "Dag must be a dataclass"
+        dml = dml or Dml()
+        dependencies = build_class_graph(self.__class__)
+        order = reversed(
+            topo_sort({k: [x for x in v["internal"] if x in dependencies.keys()] for k, v in dependencies.items()})
+        )
+        name = name or get_dag_name(self.__class__)
+        message = self.__doc__ or f"Dag: {name}"
+        dag = dml.new(name, message=message)
+        object.__setattr__(self, "dag", dag)
+        for fld in [x for x in fields(self) if hasattr(self, x.name)]:
+            object.__setattr__(self, fld.name, dag.put(getattr(self, fld.name), name=fld.name))
         for method_name in order:
-            method = getattr(dag_instance, method_name)
+            method = getattr(self, method_name)
             if not isinstance(method, Executable):
                 method = funk(method)
             assert isinstance(method, Executable)
-            method["prepop"].update({k: dag[k] for k in dependencies[method_name]["internal"]})
-            dag[method_name] = method
-            setattr(dag_instance, method_name, method)
-    return cls
+            method.prepop.update({k: dag[k] for k in dependencies[method_name]["internal"] if hasattr(dag, k)})
+            object.__setattr__(self, method_name, dag.put(method, name=method_name))
+        self.dag = dag
 
-@overload
-def dag(cls: None = None, *, dml: Optional[Dml] = None) -> Callable[[Type], Type]: ...
-@overload
-def dag(cls: Type, dml: Optional[Dml] = None) -> Type: ...
-def dag(cls: Optional[Type] = None, dml: Optional[Dml] = None) -> Union[Type, Callable[[Type], Type]]:
-    """A decorator that marks a class as a Dag.
+    def __enter__(self) -> "Dag":
+        return self
 
-    On instantiation, the Dag class is compiled and then the user can call whatever
-    methods they want on the instance as desired.
-
-    Assumptions:
-    1. the dag is defined in a file in the dags/ directory.
-    2. the dag is a dataclass with no-arg constructor.
-    3. The user will call whatever methods they want on the instance as desired.
-
-    Notes:
-    - This decorator creates a dataclass instance.
-    - The user can use dataclass style stuff with fields and whatnot.
-
-    Example
-    -------
-    >>> from dml_util import api, funkify
-    >>> @api.dag
-    >>> class MyDag:
-    >>>     dag_arg: int = 10
-    >>>     def step0(self, arg0):
-    >>>         return arg0 + 1
-    >>>     @funkify(uri="batch")
-    >>>     @api.funk  # => funkify(prepop={"dag_arg": self.dag_arg})
-    >>>     def step1(self, arg0, arg1):
-    >>>         import pandas as pd
-    >>>         df = pd.read_parquet(arg0.value().uri)
-    >>>         self.intermediate = arg0.value() * self.dag_arg.value()
-    >>>         return self.intermediate.value() + arg1.value() + 5
-    >>>     def step2(self, arg0, arg1, step1):
-    >>>         step1 = self.step0(step1)
-    >>>         return step1.value() * 2 + self.step1(arg0, arg1)
-    >>>     def run(self):
-    >>>         result1 = self.step1(1, 2)
-    >>>         result2 = self.step2(6, 7, result1)
-    >>>         print(f"Step1 Result: {result1}, Step2 Result: {result2}")
-    >>> my_dag = MyDag()
-    >>> from dataclasses import is_dataclass
-    >>> assert is_dataclass(my_dag)  # MyDag is a dataclass instance
-    >>> assert isinstance(my_dag.step0, Executable)  # step0 is now an Executable
-    >>> assert isinstance(my_dag.step1, Executable)  # step1 is now an Executable
-    >>> assert isinstance(my_dag.step2, Executable)  # step2 is now an Executable
-    >>> assert isinstance(my_dag.run, Executable)  # run is now an Executable
-    >>> assert my_dag.run.prepop == {"step1": my_dag.step1, "step2": my_dag.step2}
-    """
-    if cls is None:
-        return partial(dag, dml=dml)
-    # Ensure the class is a dataclass so fields() works and matches docstring expectations
-    _cls = cls if is_dataclass(cls) else dataclass(cls)
-    dml = dml or Dml()
-
-    @wraps(cls)
-    def wrapper(*args, **kwargs):
-        instance = _cls(*args, **kwargs)
-        assert is_dataclass(instance), "Dag must be a dataclass"
-        dependencies = build_class_graph(cls)
-        order = reversed(topo_sort({k: [x for x in v["internal"] if x in dependencies.keys()] for k, v in dependencies.items()}))
-        print(order)
-        dag_name = get_dag_name(cls)
-        with dml.new(dag_name) as dag:
-            for field in fields(instance):
-                dag[field.name] = getattr(instance, field.name)
-            for method_name in order:
-                method = getattr(instance, method_name)
-                if not isinstance(method, Executable):
-                    method = funk(method)
-                assert isinstance(method, Executable)
-                method.prepop.update({k: dag[k] for k in dependencies[method_name]["internal"]})
-                dag[method_name] = method
-                setattr(instance, method_name, dag[method_name])
-        return instance
-    return wrapper
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.dag.__exit__(exc_type, exc_value, traceback)
