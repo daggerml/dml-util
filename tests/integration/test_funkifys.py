@@ -442,7 +442,7 @@ class TestFunkCombos:
             print("testing stderr...", file=sys.stderr)
             return sum(dag.argv[1:].value())
 
-        dkr_build_in_hatch = funkify(funk.dkr_build, "hatch", data={"name": "default", "path": str(_root_)})
+        dkr_build_in_hatch = funkify(funk.dkr_build, uri="hatch", data={"name": "default", "path": str(_root_)})
         s3 = S3Store()
         vals = [1, 2, 3]
         with TemporaryDirectory(prefix="dml-util-test-") as tmpd:
