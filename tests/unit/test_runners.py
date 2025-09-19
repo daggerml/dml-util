@@ -184,10 +184,12 @@ class TestHatchRunner:
 
     @pytest.mark.skipif(not which("hatch"), reason="hatch command not found")
     def test_hatch_script_passes_env(self):
+        import sys
+
         js = HatchRunner.funkify("pandas", None)
-        print("===SCRIPT===")
-        print(js)
-        print("===END SCRIPT===")
+        print("===SCRIPT===", file=sys.stderr)
+        print(js, file=sys.stderr)
+        print("===END SCRIPT===", file=sys.stderr)
         resp = subprocess.run(
             ["bash", "-c", js["script"], "_", "env"],
             env={"DML_CACHE_KEY": "test_key", "DML_CACHE_PATH": "foo", "PATH": os.environ["PATH"]},
