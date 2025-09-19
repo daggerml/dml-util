@@ -44,8 +44,8 @@ dev = [
   "pytest-cov",
   "moto[all,server]",
   # should be specified in cli
-  "click==8.2.1",
-  "lmdb==1.7.3",
+  "click<=8.2.1",
+  "lmdb<=1.7.3",
 ]
 
 [project.scripts]
