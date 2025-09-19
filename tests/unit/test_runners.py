@@ -193,7 +193,9 @@ class TestHatchRunner:
             timeout=1,
             text=True,
         )
-        assert resp.returncode == 0, f"Script failed: {resp.stderr}"
+        assert resp.returncode == 0, (
+            f"Script failed:\n===script stdout===\n{resp.stdout}\n ===script stderr===\n{resp.stderr}===\nDML DONE"
+        )
         lines = resp.stdout.splitlines()
         env = {k: v for k, v in (x.split("=", 1) for x in lines) if k.startswith("DML_")}
         assert env["DML_CACHE_KEY"] == "test_key"
