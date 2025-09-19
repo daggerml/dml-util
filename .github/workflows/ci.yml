@@ -118,7 +118,7 @@ jobs:
         run: |
           hatch --version
           hatch env create
-          hatch env run python --version
+          hatch run python --version
       - name: create conda env
         run: |
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
