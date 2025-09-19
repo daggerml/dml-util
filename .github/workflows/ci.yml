@@ -114,6 +114,11 @@ jobs:
           pip install --constraint /tmp/reqs.txt .[dev,dml,nb]
           pip install pipx
           pipx install hatch
+      - name: test hatch
+        run: |
+          hatch --version
+          hatch env create
+          hatch env run python --version
       - name: create conda env
         run: |
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
