@@ -186,6 +186,7 @@ class TestHatchRunner:
     def test_hatch_script_passes_env(self):
         import sys
 
+        print("running hatch test", file=sys.stderr)
         js = HatchRunner.funkify("pandas", None)
         print("===SCRIPT===", file=sys.stderr)
         print(js, file=sys.stderr)
