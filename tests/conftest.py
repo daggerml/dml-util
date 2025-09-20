@@ -81,7 +81,7 @@ def clear_envvars():
         yield
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def debug(clear_envvars):
     """Fixture to set debug mode for tests."""
     with patch.dict(os.environ, {"DML_DEBUG": "1"}):
