@@ -119,6 +119,9 @@ jobs:
         run: |
           hatch --version
           echo "Hatch installed successfully."
+          echo "Testing hatch versions..."
+          pipx runpip hatch show click hatch
+          echo "creating hatch env"
           hatch env create
           echo "Hatch environment created."
           hatch run -f '{}' python --version
