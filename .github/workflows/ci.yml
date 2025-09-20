@@ -124,7 +124,7 @@ jobs:
           echo "creating hatch env"
           hatch env create
           echo "Hatch environment created."
-          hatch run -f '{}' python --version
+          hatch run python --version
           echo "Hatch Python is accessible."
       - name: create conda env
         run: |
