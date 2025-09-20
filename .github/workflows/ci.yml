@@ -113,8 +113,8 @@ jobs:
           pip install --upgrade pip
           pip install --constraint /tmp/reqs.txt .[dev,dml,nb]
           pip install pipx
-          pipx install --force hatch
-          pipx inject hatch "click<8.2"
+          pipx install hatch
+          pipx inject -f hatch "click<8.2"
       - name: test hatch
         run: |
           hatch --version
