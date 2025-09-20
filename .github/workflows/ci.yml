@@ -113,19 +113,9 @@ jobs:
           pip install --upgrade pip
           pip install --constraint /tmp/reqs.txt .[dev,dml,nb]
           pip install pipx
-          pipx install hatch
+          # pin versions because latest hatch has issues with click 8.2
+          pipx install hatch==1.14.1
           pipx inject -f hatch "click<8.2"
-      - name: test hatch
-        run: |
-          hatch --version
-          echo "Hatch installed successfully."
-          echo "Testing hatch versions..."
-          pipx runpip hatch show click hatch
-          echo "creating hatch env"
-          hatch env create
-          echo "Hatch environment created."
-          hatch run python --version
-          echo "Hatch Python is accessible."
       - name: create conda env
         run: |
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
