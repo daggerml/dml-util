@@ -117,8 +117,11 @@ jobs:
       - name: test hatch
         run: |
           hatch --version
-          # hatch env create
+          echo "Hatch installed successfully."
+          hatch env create
+          echo "Hatch environment created."
           hatch run python --version
+          echo "Hatch Python is accessible."
       - name: create conda env
         run: |
           conda create -n dml-pandas python=3.12 pandas==2.2.3 pip
