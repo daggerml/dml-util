@@ -117,7 +117,7 @@ jobs:
       - name: test hatch
         run: |
           hatch --version
-          hatch env create
+          # hatch env create
           hatch run python --version
       - name: create conda env
         run: |
