@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses as dc
+import logging
 import os
 import subprocess
 from collections import defaultdict, deque
@@ -9,8 +10,9 @@ from dataclasses import InitVar, dataclass, fields
 from functools import partial
 from inspect import getmro, getsource, getsourcefile
 from textwrap import dedent
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypeVar
 
+from daggerml import Dag as DmlDag
 from daggerml import Dml, Executable, Node
 
 from dml_util.funk import funkify
@@ -20,7 +22,13 @@ try:
 except ImportError:  # 3.8–3.10
     from typing_extensions import dataclass_transform  # type: ignore
 
+try:
+    from typing import Concatenate, ParamSpec  # 3.10+
+except ImportError:  # 3.8–3.9
+    from typing_extensions import Concatenate, ParamSpec  # type: ignore
 
+
+logger = logging.getLogger(__name__)
 funk = partial(funkify, unpack_args=True)
 
 
@@ -134,13 +142,13 @@ class AutoDataclassBase:
         dc.dataclass(**opts)(cls)
 
 
-RESERVED_WORDS = {"dag", "dml", "argv", "put", "commit"}
+RESERVED_WORDS = {"dag", "dml", "argv", "call", "put", "commit"}
 
 
 def proc_deps(cls):
     deps = {}
     for k, v in build_class_graph(cls).items():
-        if k in {"put", "commit"}:
+        if k in {"put", "commit", "call"}:
             continue
         if k in RESERVED_WORDS:
             raise ValueError(f"Field or method name {k!r} is reserved")
@@ -156,6 +164,37 @@ def proc_deps(cls):
     return deps, order
 
 
+_P = ParamSpec("P")
+_T = TypeVar("_T")
+
+
+class DelayedAction:
+    def __init__(self, action: Callable[Concatenate[DmlDag, _P], _T], /, *args: _P.args, **kwargs: _P.kwargs):
+        self.action = action
+        self.args = args
+        self.kwargs = kwargs
+
+    def __call__(self, dag: DmlDag):
+        return self.action(dag, *self.args, **self.kwargs)
+
+
+def delayed(fn: Callable[Concatenate[DmlDag, _P], _T]) -> Callable[_P, _T]:
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+        return DelayedAction(fn, *args, **kwargs)
+
+    return wrapped
+
+
+@delayed
+def load(dag: DmlDag, name: str, key: str = "result") -> Node:
+    return dag.load(name, key=key)
+
+
+@delayed
+def field(dag: DmlDag, default: Any = None, default_function: Optional[Callable] = None) -> _T:
+    return default_function(dag) if default_function else default
+
+
 @dataclass(init=False)
 class Dag(AutoDataclassBase):
     dml: InitVar[Optional[Dml]] = None
@@ -168,16 +207,38 @@ class Dag(AutoDataclassBase):
         message = self.__doc__ or f"Dag: {name}"
         dag = dml.new(name, message=message)
         for fld in [x.name for x in fields(self) if hasattr(self, x.name)]:
-            object.__setattr__(self, fld, dag.put(getattr(self, fld), name=fld))
+            obj = getattr(self, fld)
+            if isinstance(obj, DelayedAction):
+                obj = obj(dag)
+            object.__setattr__(self, fld, dag.put(obj, name=fld))
         for method_name in order:
             method = getattr(self, method_name)
+            if isinstance(method, DelayedAction):
+                method = method(dag)
+            # if isinstance(method, Node):
+            #     method = method.value()
             if not isinstance(method, Executable):
                 method = funk(method)
             assert isinstance(method, Executable)
             method.prepop.update({k: dag[k] for k in deps[method_name] if hasattr(dag, k)})
+            dag.put(method, name=method_name)
             object.__setattr__(self, method_name, dag.put(method, name=method_name))
         self.dag = dag
         self.dml = dml
+
+    def __init__(self, *args, **kwargs):
+        # AutoDataclassBase will call __post_init__
+        super().__init__(*args, **kwargs)
+
+    def __enter__(self):
+        self.dag.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self.dag.__exit__(exc_type, exc_value, traceback)
+
+    def call(self, *args, **kwargs) -> Node:
+        return self.dag.call(*args, **kwargs)
 
     def put(self, obj: Any, name: Optional[str] = None) -> Node:
         return self.dag.put(obj, name=name)
