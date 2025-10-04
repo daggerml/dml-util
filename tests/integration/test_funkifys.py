@@ -262,7 +262,7 @@ class TestFunkSingles:
                 assert set(dag.stack.keys()) == {"BucketName", "BucketArn"}
 
     @pytest.mark.usefixtures("s3_bucket", "logs", "debug")
-    def test_docker(self, docker_flags, debug):
+    def test_docker(self, docker_flags):
         @funkify
         def fn(dag):
             import sys  # noqa: F811

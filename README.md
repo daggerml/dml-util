@@ -84,6 +84,86 @@ batch_fn = funkify(fn, data={"image": img.value()}, adapter=dag.batch.value())
 result = batch_fn(1, 2, 3, 4)
 ```
 
+### Experimental Api
+
+```python
+from dml_util.experimental import api
+```
+
+#### Example: Basic DAG with fields and steps
+
+Notes:
+
+1. Fields are coerced to nodes, so you must use `.value()` to get their values.
+2. Steps can call other steps and the resulting dependency graph is computed automatically (so caching still makes sense).
+
+```python
+class MyDag(api.Dag):
+    a: int = api.field(default=1)
+    b: int = api.field(default=2)
+
+    def step0(self):
+        return self.a.value() + self.b.value()
+
+    def step1(self):
+        return self.step0(name="s0") * 10
+
+# Instantiate and use the DAG
+with MyDag() as dag:
+    print(dag.step1().value())  # Output: 30
+
+from daggerml import Dml
+dml = Dml()
+dag = dml.load("path:to:dag:file::MyDag")
+try:
+    dag.result.load().a.value()
+except Exception as e:
+    print("`a` is not a node in `step1`")
+dag.result.load().s0.load().a.value()  # Output: 1
+```
+
+#### Example: Using default_function for dynamic fields
+
+```python
+from dml_util.experimental import api
+
+class MyDag2(api.Dag):
+    a: int = api.field(default=5)
+    b: int = api.field(default_function=lambda dag: dag.a.value() * 2)
+
+    def compute(self):
+        return self.a.value() + self.b.value()
+
+with MyDag2() as dag:
+    dag.commit(dag.compute())
+```
+
+#### Example: Loading dag values
+
+```python
+from dml_util.experimental import api
+
+class MyDag3(api.Dag):
+    a: int = api.field(default=1)
+    b: int = api.load("path:to:dag:file::MyDag2", "b")
+
+    def add(self):
+        return self.a.value() + self.b.value()
+```
+
+#### Example: `api.funk`
+
+This is the experimental equivalent of `dml_util.funkify`.
+
+```python
+from dml_util.experimental import api
+
+class MyDag4(api.Dag):
+    @api.funk(uri=api.load("batch"), adapter="batch")
+    def multiply(self, x, y):
+        return x.value() * y.value()
+```
+
 ## Documentation
 
 - All public functions and classes use [numpy style docstrings](https://numpydoc.readthedocs.io/en/latest/format.html).
