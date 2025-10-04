@@ -221,5 +221,5 @@ class TestDagCompilation:
             pass
 
         with pytest.raises(ZeroDivisionError, match="division by zero"):
-            with MyTestDag() as dag:
-                1 / 0
+            with MyTestDag() as dag:  # noqa: F841
+                1 / 0  # noqa: B018
