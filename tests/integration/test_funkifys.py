@@ -17,7 +17,7 @@ from dml_util.aws.s3 import S3Store
 from dml_util.funk import funkify
 from tests.util import _root_
 
-pytestmark = pytest.mark.slow  # marks the entire file as slow for pytest.
+pytestmark = [pytest.mark.slow, pytest.mark.needs_dml]  # marks the entire file as slow for pytest.
 VALID_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+")
 
 

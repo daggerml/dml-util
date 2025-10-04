@@ -1,4 +1,7 @@
+from typing import Any
+
 import pytest
+from daggerml import Dml, Node
 
 from dml_util.experimental import api
 from dml_util.experimental.api import build_class_graph
@@ -125,6 +128,8 @@ class MyDag(api.Dag):
         return arg0.value() + 1
 
 
+@pytest.mark.needs_dml
+@pytest.mark.usefixtures("debug", "dml")
 class TestDagCompilation:
     def test_dag_name_default(self):
         assert api.get_dag_name(MyDag) == "tests:unit:experimental:test_api::MyDag"
@@ -173,3 +178,49 @@ class TestDagCompilation:
         deps, order = api.proc_deps(DagClass)
         assert list(order) == ["step0", "step1", "step2"]
         assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"]}
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("val", [1, "asdf", True, None])
+    def test_fields_default(self, val):
+        class MyTestDag(api.Dag):
+            a0: Any = api.field(default=val)
+
+        assert isinstance(MyTestDag.a0, api.DelayedAction)
+
+        dag = MyTestDag()
+        assert dag.a0.value() == val
+
+    @pytest.mark.slow
+    def test_fields_default_function(self):
+        class MyTestDag(api.Dag):
+            a0: int = 0
+            a1: Any = api.field(default=1)
+            a2: Node = api.field(default_function=lambda dag: [dag.a0, dag.a1])
+
+        assert isinstance(MyTestDag.a1, api.DelayedAction)
+
+        dag = MyTestDag()
+        assert dag.a2.value() == [0, 1]
+
+    @pytest.mark.slow
+    def test_load(self):
+        class MyTestDag(api.Dag):
+            a0: Node = api.load("d0")
+            a1: Node = api.load("d0", key="other")
+
+        assert isinstance(MyTestDag.a1, api.DelayedAction)
+        with Dml().new("d0") as dag:
+            dag.put(2, name="other")
+            dag.commit(1)
+        dag = MyTestDag()
+        assert dag.a0.value() == 1
+        assert dag.a1.value() == 2
+
+    @pytest.mark.slow
+    def test_context_manager(self):
+        class MyTestDag(api.Dag):
+            pass
+
+        with pytest.raises(ZeroDivisionError, match="division by zero"):
+            with MyTestDag() as dag:  # noqa: F841
+                1 / 0  # noqa: B018

@@ -46,7 +46,13 @@ def _fnk(fn, extra_fns, extra_lines, unpack_args=False):
     tpl = dedent(
         """
         #!/usr/bin/env python3
+        import logging
+        from typing import *
+
         from dml_util import aws_fndag
+
+
+        logger = logging.getLogger("dml_main")
 
         {src}
 

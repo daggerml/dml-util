@@ -85,6 +85,7 @@ def clear_envvars():
 def debug(clear_envvars):
     """Fixture to set debug mode for tests."""
     with patch.dict(os.environ, {"DML_DEBUG": "1"}):
+        logging.basicConfig(level=logging.DEBUG)
         yield
 
 

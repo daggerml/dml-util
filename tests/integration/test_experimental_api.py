@@ -3,7 +3,7 @@ import pytest
 
 from dml_util.experimental import api
 
-pytestmark = pytest.mark.slow  # marks the entire file as slow for pytest.
+pytestmark = [pytest.mark.slow, pytest.mark.needs_dml]  # marks the entire file as slow for pytest.
 
 
 @pytest.mark.usefixtures("dml")
