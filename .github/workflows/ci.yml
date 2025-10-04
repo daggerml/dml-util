@@ -84,7 +84,7 @@ jobs:
           DML_DEBUG: "1"
         run: |
           # pytest --cov -m "not slow"
-          pytest -m "not slow"
+          pytest -m "not needs_dml"
           pytest --doctest-modules src/
   test:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/master') ||

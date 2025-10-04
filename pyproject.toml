@@ -63,6 +63,7 @@ testpaths = [
 ]
 markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "needs_aws: marks tests that need daggerml-cli to be installed",
 ]
 
 [tool.hatch.version]

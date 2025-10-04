@@ -128,6 +128,7 @@ class MyDag(api.Dag):
         return arg0.value() + 1
 
 
+@pytest.mark.needs_dml
 @pytest.mark.usefixtures("debug", "dml")
 class TestDagCompilation:
     def test_dag_name_default(self):
