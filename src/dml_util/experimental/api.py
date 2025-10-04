@@ -215,13 +215,10 @@ class Dag(AutoDataclassBase):
             method = getattr(self, method_name)
             if isinstance(method, DelayedAction):
                 method = method(dag)
-            # if isinstance(method, Node):
-            #     method = method.value()
             if not isinstance(method, Executable):
                 method = funk(method)
             assert isinstance(method, Executable)
             method.prepop.update({k: dag[k] for k in deps[method_name] if hasattr(dag, k)})
-            dag.put(method, name=method_name)
             object.__setattr__(self, method_name, dag.put(method, name=method_name))
         self.dag = dag
         self.dml = dml
