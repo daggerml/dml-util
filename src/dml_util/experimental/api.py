@@ -1,3 +1,3 @@
-from dml_util.experimental._api import Dag, field, funk, load, ref
+from dml_util.experimental._api import Dag, field, funk, load, ref, wrap
 
-__all__ = ("Dag", "field", "funk", "load", "ref")
+__all__ = ("Dag", "field", "funk", "load", "ref", "wrap")

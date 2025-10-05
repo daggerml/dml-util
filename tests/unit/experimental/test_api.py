@@ -119,6 +119,36 @@ class TestAnalyzer:
         assert graph["use_internal"] == {"internal": ["const", "foo"]}
         assert set(graph.keys()) == set(build_class_graph(BasicAccess).keys())
 
+    def test_dag_name_default(self):
+        assert get_dag_name(BasicAccess) == "tests:unit:experimental:test_api::BasicAccess"
+
+    def test_reserved_words(self):
+        class DagClass:
+            a: int = 5
+
+            def fn(self, arg0):
+                return self.commit(self.put(self.argv + self.a))
+
+        deps, order = proc_deps(DagClass)
+        assert list(order) == ["fn"]
+        assert deps == {"fn": ["a"]}
+
+    def test_to_in_dag(self):
+        class DagClass(MyDag):
+            foo: int = 5
+
+            def step1(self, arg0, arg1):
+                # Note `dag_arg`
+                self.intermediate = arg0.value() * self.dag_arg.value()  # note `intermediate` is not a dep
+                return self.step0(self.intermediate).value() + arg1.value() + 5
+
+            def step2(self, arg0):
+                return self.step1(arg0).value() * self.foo.value()
+
+        deps, order = proc_deps(DagClass)
+        assert [x for x in order if x != "wrap"] == ["step0", "step1", "step2"]
+        assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"], "wrap": []}
+
 
 class MyDag(api.Dag):
     dag_arg: int = 10
@@ -127,12 +157,8 @@ class MyDag(api.Dag):
         return arg0.value() + 1
 
 
-@pytest.mark.needs_dml
-@pytest.mark.usefixtures("debug", "dml")
+@pytest.mark.usefixtures("fake_dml")
 class TestDagCompilation:
-    def test_dag_name_default(self):
-        assert get_dag_name(MyDag) == "tests:unit:experimental:test_api::MyDag"
-
     def test_access_does_not_exist(self):
         class DagClass(MyDag):
             def step1(self):
@@ -148,17 +174,6 @@ class TestDagCompilation:
                 self.doesnotexist  # noqa: B018
 
         DagClass()
-
-    def test_reserved_words(self):
-        class DagClass(api.Dag):
-            a: int = 5
-
-            def fn(self, arg0):
-                return self.commit(self.put(self.argv + self.a))
-
-        deps, order = proc_deps(DagClass)
-        assert list(order) == ["fn"]
-        assert deps == {"fn": ["a"]}
 
     def test_reserved_words_defined(self):
         class DagClass(api.Dag):
@@ -183,5 +198,5 @@ class TestDagCompilation:
                 return self.step1(arg0).value() * self.foo.value()
 
         deps, order = proc_deps(DagClass)
-        assert list(order) == ["step0", "step1", "step2"]
-        assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"]}
+        assert [x for x in order if x != "wrap"] == ["step0", "step1", "step2"]
+        assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"], "wrap": []}

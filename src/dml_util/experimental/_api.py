@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import ast
-import dataclasses as dc
 import logging
 import os
 import subprocess
 from collections import defaultdict, deque
-from dataclasses import InitVar, dataclass, fields
+from dataclasses import InitVar, asdict, dataclass, fields
 from functools import partial
 from inspect import getmro, getsource, getsourcefile
 from textwrap import dedent
@@ -138,7 +137,7 @@ class AutoDataclassBase:
                 break
         opts = _copy_params(params) if params else {}
         opts["init"] = True  # <-- important: generate an __init__ for the subclass
-        dc.dataclass(**opts)(cls)
+        dataclass(**opts)(cls)
 
 
 RESERVED_WORDS = {"dag", "dml", "argv", "call", "put", "commit"}
@@ -170,7 +169,16 @@ class DelayedAction:
         self.kwargs = kwargs
 
     def __call__(self, dag: DmlDag):
-        return self.action(dag, *self.args, **self.kwargs)
+        def rec(x):
+            if isinstance(x, DelayedAction):
+                x = x(dag)
+            if isinstance(x, (list, tuple)):
+                x = type(x)(rec(i) for i in x)
+            if isinstance(x, dict):
+                x = {k: rec(v) for k, v in x.items()}
+            return x
+
+        return self.action(dag, *rec(self.args), **rec(self.kwargs))
 
 
 def delayed(fn: Callable[Concatenate[DmlDag, _P], _T]) -> Callable[_P, _T]:
@@ -181,29 +189,12 @@ def delayed(fn: Callable[Concatenate[DmlDag, _P], _T]) -> Callable[_P, _T]:
 
 
 def funkify_wrapper(dag: DmlDag, *args: Any, **kwargs: Any) -> Any:
-    def recurse(x):
-        if isinstance(x, DelayedAction):
-            x = x(dag)
-        if isinstance(x, Node):
-            x = x.value()
-        if isinstance(x, (list, tuple)):
-            x = type(x)(recurse(i) for i in x)
-        if isinstance(x, dict):
-            x = {k: recurse(v) for k, v in x.items()}
-        return x
-
-    args = tuple([recurse(x) for x in args])
-    kwargs = {k: recurse(v) for k, v in kwargs.items()}
     return funkify(*args, **kwargs)
-
-
-def placeholder(dag, name):
-    return dag[name]
 
 
 class Placeholder:
     def __call__(self, name: str) -> Node:
-        return cast(Node, DelayedAction(placeholder, name))
+        return cast(Node, DelayedAction(lambda dag, n: dag[n], name))
 
     def __getattr__(self, name: str):
         return self(name)
@@ -296,7 +287,6 @@ def funk(
             extra_lines=extra_lines,
             prepop=prepop,
         )
-
     da = DelayedAction(
         funkify_wrapper,
         fn,
@@ -319,6 +309,29 @@ def load(dag: DmlDag, name: str, key: str = "result") -> Node:
 @delayed
 def field(dag: DmlDag, default: Any = None, default_function: Optional[Callable] = None) -> Any:
     return default_function(dag) if default_function else default
+
+
+def _wrap(fn, new_data):
+    if isinstance(fn, Node):
+        fn = fn.value()
+    if isinstance(new_data, Node):
+        new_data = new_data.value()
+    if isinstance(new_data, Executable):
+        new_data = asdict(new_data)
+    data = new_data["data"].copy()
+    data["sub"] = {"uri": fn.uri, "adapter": fn.adapter, "data": fn.data}
+    new_data = Executable(
+        uri=new_data["uri"],
+        data=data,
+        adapter=new_data["adapter"],
+        prepop=fn.prepop,
+    )
+    return new_data
+
+
+@delayed
+def wrap(dag: DmlDag, fn, new_data):
+    return _wrap(fn, new_data)
 
 
 @dataclass(init=False)
@@ -347,9 +360,11 @@ class Dag(AutoDataclassBase):
                 raise ValueError(f"Method {method_name!r} did not resolve to an Executable")
             if len(set(deps[method_name]) - set(dag.keys()) - set(method.prepop)) > 0:
                 unknown = sorted(set(deps[method_name]) - set(dag.keys()) - set(method.prepop))
-                raise ValueError(f"Method {method_name!r} depends on unknown fields or methods: {unknown!r}")
+                msg = f"Method {method_name!r} depends on unknown fields or methods: {unknown!r}"
+                raise ValueError(msg)
             method.prepop.update({k: dag[k] for k in deps[method_name] if k in dag and k not in method.prepop})
-            object.__setattr__(self, method_name, dag.put(method, name=method_name))
+            doc = method.fn.__doc__ or f"Method: {method_name}"
+            object.__setattr__(self, method_name, dag.put(method, name=method_name, doc=doc))
         self.dag = dag
         self.dml = dml
 
@@ -360,6 +375,10 @@ class Dag(AutoDataclassBase):
     def __enter__(self):
         self.dag.__enter__()
         return self
+
+    @funk(extra_fns=(_wrap,), extra_lines=("from daggerml import Executable, Node",))
+    def wrap(self, fn, new_data):
+        return _wrap(fn, new_data)
 
     def __exit__(self, exc_type, exc_value, traceback):
         return self.dag.__exit__(exc_type, exc_value, traceback)

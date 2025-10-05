@@ -8,7 +8,7 @@ from dml_util import funk
 from dml_util.experimental import _api as api_impl
 from dml_util.experimental import api
 
-pytestmark = [pytest.mark.slow, pytest.mark.needs_dml]  # marks the entire file as slow for pytest.
+pytestmark = [pytest.mark.slow, pytest.mark.needs_dml]  # marks the entire file
 
 
 @pytest.mark.usefixtures("dml")
@@ -39,6 +39,28 @@ class TestDagApi:
         my_dag = MyDagWithDoc()
         my_dag.dag.commit(2)
         assert dml("commit", "list")[0]["message"] == "This is my custom dag"
+
+    def test_funk_docstring(self):
+        class DagClass(api.Dag):
+            foo: int = 5
+
+            def step1(self, arg0, arg1):
+                """This is my custom step1 function"""
+                self.intermediate = arg0.value() * self.foo.value()
+                return self.intermediate.value() + arg1.value()
+
+            @api.funk(prepop={"x": 3})
+            def step2(self, arg0, arg1):
+                """This is my custom step2 function"""
+                return arg0.value() + arg1.value() + self.x.value()
+
+        dag = DagClass()
+        assert isinstance(dag.step1, Node)
+        desc = dag.dag.dml("node", "describe", dag.step1.ref.to)
+        assert desc["doc"] == "This is my custom step1 function"
+        assert isinstance(dag.step2, Node)
+        desc = dag.dag.dml("node", "describe", dag.step2.ref.to)
+        assert desc["doc"] == "This is my custom step2 function"
 
     def test_with_funks(self):
         class DagClass(api.Dag):
@@ -221,37 +243,35 @@ class TestDagApi:
         class A0(api.Dag):
             dkr_build: Any = funk.dkr_build
             dkr_flags: Any = api.field(default=docker_flags)
+            tarball: Any = api.field(default_function=lambda dag: self.get_tarball(dag.dml))
 
+            @api.funk(prepop={"x": 1})
             def fn(self, *args):
-                return sum([x.value() for x in args])
+                return sum([x.value() for x in args]) + self.x.value()
 
             def dockerify(self, tarball):
-                from dml_util import funkify
-
                 img = self.dkr_build(
                     tarball,
                     ["--platform", "linux/amd64", "-f", "tests/assets/dkr-context/Dockerfile"],
                     timeout=60_000,
-                    name="img,",
+                    name="img",
                 )
-                fn = self.put(
-                    funkify(
-                        self.fn.value(),
-                        uri="docker",
-                        data={"image": img.value(), "flags": self.dkr_flags.value()},
-                        adapter="local",
-                    ),
-                    name="fn-in-docker",
+                fn = self.wrap(
+                    self.fn,
+                    {
+                        "uri": "docker",
+                        "data": {"image": img, "flags": self.dkr_flags},
+                        "adapter": "dml-util-local-adapter",
+                    },
                 )
                 return fn
 
-            def run(self, tarball, *vals):
-                fn = self.dockerify(tarball, name="dockerified-fn")
+            def run(self, *vals):
+                fn = self.dockerify(self.tarball, name="dockerified-fn")
                 baz = fn(*vals, name="baz")
                 return baz
 
         with A0() as dag:
-            tarball = self.get_tarball(dag.dml)
             vals = [1, 2, 3, 4, 5]
-            resp = dag.run(tarball, *vals)
-            assert resp.value() == sum(vals)
+            resp = dag.run(*vals)
+            assert resp.value() == sum(vals) + 1
