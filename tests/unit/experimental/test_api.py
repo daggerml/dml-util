@@ -159,6 +159,7 @@ class MyDag(api.Dag):
 
 @pytest.mark.usefixtures("fake_dml")
 class TestDagCompilation:
+    @pytest.mark.needs_dml
     def test_access_does_not_exist(self):
         class DagClass(MyDag):
             def step1(self):
@@ -167,6 +168,7 @@ class TestDagCompilation:
         with pytest.raises(ValueError, match=re.escape("depends on unknown fields or methods: ['doesnotexist']")):
             DagClass()
 
+    @pytest.mark.needs_dml
     def test_access_does_not_exist_prepop(self):
         class DagClass(MyDag):
             @api.funk(prepop={"doesnotexist": 3})
