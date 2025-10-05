@@ -241,7 +241,7 @@ class TestDagApi:
     @pytest.mark.usefixtures("s3_bucket", "logs", "debug")
     def test_docker(self, docker_flags):
         class A0(api.Dag):
-            dkr_build: Any = funk.dkr_build
+            dkr_build: Any = api.field(default=funk.dkr_build)
             dkr_flags: Any = api.field(default=docker_flags)
             tarball: Any = api.field(default_function=lambda dag: self.get_tarball(dag.dml))
 
