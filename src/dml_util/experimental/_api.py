@@ -163,15 +163,20 @@ _UNPACKED = Callable[Concatenate["Dag", _P], Any]
 
 
 class DelayedAction:
-    def __init__(self, action: Callable[Concatenate[DmlDag, _P], _T], /, *args: _P.args, **kwargs: _P.kwargs):
+    def __init__(
+        self, action: Callable[Concatenate[DmlDag, _P], _T], /, *args: _P.args, denode=False, **kwargs: _P.kwargs
+    ):
         self.action = action
         self.args = args
         self.kwargs = kwargs
+        self.denode = denode
 
     def __call__(self, dag: DmlDag):
         def rec(x):
             if isinstance(x, DelayedAction):
                 x = x(dag)
+            if self.denode and isinstance(x, Node):
+                x = x.value()
             if isinstance(x, (list, tuple)):
                 x = type(x)(rec(i) for i in x)
             if isinstance(x, dict):
@@ -297,6 +302,7 @@ def funk(
         extra_lines=extra_lines,
         prepop=prepop,
         unpack_args=True,
+        denode=True,
     )
     return cast(Executable, da)
 
