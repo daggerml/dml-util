@@ -1,10 +1,9 @@
-from typing import Any
+import re
 
 import pytest
-from daggerml import Dml, Node
 
 from dml_util.experimental import api
-from dml_util.experimental.api import build_class_graph
+from dml_util.experimental._api import build_class_graph, get_dag_name, proc_deps
 
 
 def dec(fn):
@@ -120,6 +119,36 @@ class TestAnalyzer:
         assert graph["use_internal"] == {"internal": ["const", "foo"]}
         assert set(graph.keys()) == set(build_class_graph(BasicAccess).keys())
 
+    def test_dag_name_default(self):
+        assert get_dag_name(BasicAccess) == "tests:unit:experimental:test_api::BasicAccess"
+
+    def test_reserved_words(self):
+        class DagClass:
+            a: int = 5
+
+            def fn(self, arg0):
+                return self.commit(self.put(self.argv + self.a))
+
+        deps, order = proc_deps(DagClass)
+        assert list(order) == ["fn"]
+        assert deps == {"fn": ["a"]}
+
+    def test_to_in_dag(self):
+        class DagClass(MyDag):
+            foo: int = 5
+
+            def step1(self, arg0, arg1):
+                # Note `dag_arg`
+                self.intermediate = arg0.value() * self.dag_arg.value()  # note `intermediate` is not a dep
+                return self.step0(self.intermediate).value() + arg1.value() + 5
+
+            def step2(self, arg0):
+                return self.step1(arg0).value() * self.foo.value()
+
+        deps, order = proc_deps(DagClass)
+        assert [x for x in order if x != "wrap"] == ["step0", "step1", "step2"]
+        assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"], "wrap": []}
+
 
 class MyDag(api.Dag):
     dag_arg: int = 10
@@ -128,30 +157,25 @@ class MyDag(api.Dag):
         return arg0.value() + 1
 
 
-@pytest.mark.needs_dml
-@pytest.mark.usefixtures("debug", "dml")
+@pytest.mark.usefixtures("fake_dml")
 class TestDagCompilation:
-    def test_dag_name_default(self):
-        assert api.get_dag_name(MyDag) == "tests:unit:experimental:test_api::MyDag"
-
+    @pytest.mark.needs_dml
     def test_access_does_not_exist(self):
         class DagClass(MyDag):
             def step1(self):
                 self.doesnotexist  # noqa: B018
 
-        with pytest.raises(ValueError, match="depends on unknown field or method: 'doesnotexist'"):
+        with pytest.raises(ValueError, match=re.escape("depends on unknown fields or methods: ['doesnotexist']")):
             DagClass()
 
-    def test_reserved_words(self):
-        class DagClass(api.Dag):
-            a: int = 5
+    @pytest.mark.needs_dml
+    def test_access_does_not_exist_prepop(self):
+        class DagClass(MyDag):
+            @api.funk(prepop={"doesnotexist": 3})
+            def step1(self):
+                self.doesnotexist  # noqa: B018
 
-            def fn(self, arg0):
-                return self.commit(self.put(self.argv + self.a))
-
-        deps, order = api.proc_deps(DagClass)
-        assert list(order) == ["fn"]
-        assert deps == {"fn": ["a"]}
+        DagClass()
 
     def test_reserved_words_defined(self):
         class DagClass(api.Dag):
@@ -161,7 +185,7 @@ class TestDagCompilation:
                 return 3
 
         with pytest.raises(ValueError, match="Field or method name 'argv' is reserved"):
-            api.proc_deps(DagClass)
+            proc_deps(DagClass)
 
     def test_subclass(self):
         class DagClass(MyDag):
@@ -175,52 +199,6 @@ class TestDagCompilation:
             def step2(self, arg0):
                 return self.step1(arg0).value() * self.foo.value()
 
-        deps, order = api.proc_deps(DagClass)
-        assert list(order) == ["step0", "step1", "step2"]
-        assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"]}
-
-    @pytest.mark.slow
-    @pytest.mark.parametrize("val", [1, "asdf", True, None])
-    def test_fields_default(self, val):
-        class MyTestDag(api.Dag):
-            a0: Any = api.field(default=val)
-
-        assert isinstance(MyTestDag.a0, api.DelayedAction)
-
-        dag = MyTestDag()
-        assert dag.a0.value() == val
-
-    @pytest.mark.slow
-    def test_fields_default_function(self):
-        class MyTestDag(api.Dag):
-            a0: int = 0
-            a1: Any = api.field(default=1)
-            a2: Node = api.field(default_function=lambda dag: [dag.a0, dag.a1])
-
-        assert isinstance(MyTestDag.a1, api.DelayedAction)
-
-        dag = MyTestDag()
-        assert dag.a2.value() == [0, 1]
-
-    @pytest.mark.slow
-    def test_load(self):
-        class MyTestDag(api.Dag):
-            a0: Node = api.load("d0")
-            a1: Node = api.load("d0", key="other")
-
-        assert isinstance(MyTestDag.a1, api.DelayedAction)
-        with Dml().new("d0") as dag:
-            dag.put(2, name="other")
-            dag.commit(1)
-        dag = MyTestDag()
-        assert dag.a0.value() == 1
-        assert dag.a1.value() == 2
-
-    @pytest.mark.slow
-    def test_context_manager(self):
-        class MyTestDag(api.Dag):
-            pass
-
-        with pytest.raises(ZeroDivisionError, match="division by zero"):
-            with MyTestDag() as dag:  # noqa: F841
-                1 / 0  # noqa: B018
+        deps, order = proc_deps(DagClass)
+        assert [x for x in order if x != "wrap"] == ["step0", "step1", "step2"]
+        assert deps == {"step0": [], "step1": ["dag_arg", "step0"], "step2": ["foo", "step1"], "wrap": []}

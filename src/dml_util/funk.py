@@ -227,7 +227,8 @@ def funkify(
     data = data or {}
     prepop = prepop or {}
     if isinstance(adapter, Executable):
-        assert isinstance(fn, Executable), "Adapter must be a Executable if fn is a Executable"
+        if not isinstance(fn, Executable):
+            raise ValueError("If adapter is an Executable, fn must also be an Executable")
         return Executable(
             adapter.uri,
             data={"sub": fn, **data},

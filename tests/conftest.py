@@ -97,6 +97,14 @@ def dml(tmpdir):
 
 
 @pytest.fixture
+def fake_dml():
+    # patches Dml and Dag so that neither does anything
+    with patch("daggerml.core.Dml", autospec=True) as mock_dml:
+        with patch("daggerml.core.Dag", autospec=True) as mock_dag:
+            yield mock_dml, mock_dag
+
+
+@pytest.fixture
 def aws_server(_aws_server, clear_envvars):
     # clear out env variables for safety
     # this loads env vars, so import after clearing
